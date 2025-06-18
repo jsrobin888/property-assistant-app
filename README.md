@@ -102,6 +102,19 @@ docker run -p 8000:8000 --env-file .env.local property-assistant
 
 ---
 
+## 🧪 Quick Tests (optional)
+
+```bash
+python -c "import langchain_openai; print('✅ LangChain OpenAI installed')"
+python -c "import langchain_huggingface; print('✅ LangChain HuggingFace installed')"
+python -c "import sentence_transformers; print('✅ Sentence Transformers installed')"
+python -c "import numpy; print(f'✅ NumPy {numpy.__version__}')"
+python -m app.examples.use_cases.integration_cases full
+```
+
+
+---
+
 ## 🤝 Contributing
 
 1. Fork → feature branch → PR
