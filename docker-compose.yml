@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  property-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: property-management-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Basic Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      
+      # Gmail Configuration
+      - GMAIL_IMAP_HOST=${GMAIL_IMAP_HOST:-imap.gmail.com}
+      - GMAIL_USERNAME=${GMAIL_USERNAME:-}
+      - GMAIL_PASSWORD=${GMAIL_PASSWORD:-}
+      
+      # AI API Keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      
+      # LLM Settings
+      - USE_LOCAL_MODELS=${USE_LOCAL_MODELS:-true}
+      - LOCAL_AI_BASE_URL=${LOCAL_AI_BASE_URL:-http://localhost:11434}
+      
+      # Database Configuration
+      - DATABASE_PATH=/app/data
+      - TINYDB_MAIN_FILE=/app/data/email_system.json
+      - TINYDB_TEST_FILE=/app/data/test_db.json
+      
+      # Python environment
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Mount source code for development
+      - .:/app
+      # Mount data directory for persistence (includes TinyDB JSON files)
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Specifically mount TinyDB files to ensure persistence
+      - ./email_system.json:/app/data/email_system.json
+      - ./test_db.json:/app/data/test_db.json
+    working_dir: /app
+    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    restart: always
+    # Advanced setups
+    # # Resource limits and reservations
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '4.0'          # Maximum 4 CPU cores
+    #       memory: 5G          # Maximum 10GB RAM
+    #     reservations:
+    #       cpus: '2.0'          # Reserved 2 CPU cores (minimum)
+    #       memory: 1G           # Reserved 4GB RAM (minimum)
+    # # Alternative resource configuration (for older Docker Compose versions)
+    # cpus: 4.0                  # CPU limit
+    # mem_limit: 5g             # Memory limit
+    # mem_reservation: 4g        # Memory reservation
+    # CPU affinity and other settings
+    # cpuset: "0-3"              # Use CPU cores 0-3 (4 cores)
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    #   interval: 130s
+    #   timeout: 110s
+    #   retries: 3
+    #   start_period: 110s
+
+# Create named volumes for better data management (optional)
+volumes:
+  tinydb_data:
+    driver: local
+
+# Relative build duration: ~170–400 seconds depending on environment

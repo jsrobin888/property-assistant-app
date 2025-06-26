@@ -96,8 +96,8 @@ For local hacking you can leave **DATABASE\_URL** empty to fall back to in‑mem
 ## 🐳 Docker (optional)
 
 ```bash
-docker build -t property-assistant .
-docker run -p 8000:8000 --env-file .env.local property-assistant
+[Optional] docker-compose down -v 
+docker-compose up --build
 ```
 
 ---
