@@ -8,6 +8,8 @@ services:
     container_name: property-management-api
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       # Basic Configuration
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -52,7 +54,7 @@ services:
     #   resources:
     #     limits:
     #       cpus: '4.0'          # Maximum 4 CPU cores
-    #       memory: 5G          # Maximum 10GB RAM
+    #       memory: 5G           # Maximum 10GB RAM, Medium 5GB RAM
     #     reservations:
     #       cpus: '2.0'          # Reserved 2 CPU cores (minimum)
     #       memory: 1G           # Reserved 4GB RAM (minimum)
@@ -74,4 +76,4 @@ volumes:
   tinydb_data:
     driver: local
 
-# Relative build duration: ~170–400 seconds depending on environment
+# Relative build duration: ~170–500 seconds depending on environment
