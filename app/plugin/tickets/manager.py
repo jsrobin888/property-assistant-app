@@ -40,9 +40,18 @@ class Ticket:
             body = self.email_data.get('body', '')
             content = f"{subject} {body}"
             
+            # ADD THIS: Debug logging
+            logger.info(f"Building ticket from email: {subject[:50]}...")
+            logger.info(f"Email data keys: {list(self.email_data.keys())}")
+            logger.info(f"Action item keys: {list(self.action_item.keys())}")
+            
             # Get action item details
             action_data = self.action_item.get('action_data', {})
             category_hint = action_data.get('category', 'maintenance')
+            
+            # ADD THIS: More debug logging
+            logger.info(f"Action data: {action_data}")
+            logger.info(f"Category hint: {category_hint}")
             
             # Determine ticket categorization
             category, request_type = CategoryMapper.determine_category_from_content(content)
@@ -59,6 +68,9 @@ class Ticket:
             # Generate descriptions
             short_description = self._generate_short_description(subject, category)
             description = self._generate_full_description(content, action_data)
+            
+            # ADD THIS: Log the key fields
+            logger.info(f"Ticket fields: category={category}, urgency={urgency}, short_desc={short_description[:30]}...")
             
             # Build complete ticket schema
             ticket_data = TicketSchemaValidator.create_ticket_schema(
@@ -86,11 +98,17 @@ class Ticket:
                 }
             )
             
+            # ADD THIS: Log the final ticket data
+            logger.info(f"Ticket data created successfully: {ticket_data.get('ticket_id', 'No ID')}")
             return ticket_data
             
         except Exception as e:
             logger.error(f"Error building ticket data: {e}")
+            # ADD THIS: Log more details about the error
+            logger.error(f"Email data: {self.email_data}")
+            logger.error(f"Action item: {self.action_item}")
             raise
+
     
     def _generate_short_description(self, subject: str, category: str) -> str:
         """Generate concise short description"""
@@ -121,34 +139,67 @@ class Ticket:
     
     def validate(self) -> bool:
         """Validate ticket data against schema"""
-        is_valid, missing_fields = TicketSchemaValidator.validate_ticket_data(self.ticket_data)
-        
-        if not is_valid:
-            logger.warning(f"Ticket validation failed. Missing fields: {missing_fields}")
-        
-        return is_valid
+        try:
+            is_valid, missing_fields = TicketSchemaValidator.validate_ticket_data(self.ticket_data)
+            
+            if not is_valid:
+                # CHANGE THIS: More detailed error logging
+                logger.error(f"Ticket validation failed. Missing fields: {missing_fields}")
+                logger.error(f"Ticket data fields present: {list(self.ticket_data.keys())}")
+                logger.error(f"Ticket data: {self.ticket_data}")
+                return False
+            
+            # ADD THIS: Success logging
+            logger.info("Ticket validation passed successfully")
+            return True
+            
+        except Exception as e:
+            # ADD THIS: Catch validation errors
+            logger.error(f"Error during ticket validation: {e}")
+            return False
     
     def save(self) -> Optional[str]:
         """Save ticket to database"""
         try:
+            logger.info("Starting ticket save process...")
+            
             if not self.validate():
-                logger.error("Cannot save invalid ticket")
+                logger.error("Cannot save invalid ticket - validation failed")
                 return None
             
-            ticket_id = TicketData.create(self.ticket_data)
+            logger.info("Ticket validation passed, creating in database...")
+            
+            # ADD THIS: More detailed database operation logging
+            try:
+                ticket_id = TicketData.create(self.ticket_data)
+                logger.info(f"TicketData.create returned: {ticket_id}")
+            except Exception as create_error:
+                logger.error(f"TicketData.create failed: {create_error}")
+                raise
+            
+            if not ticket_id:
+                logger.error("TicketData.create returned None or empty ticket_id")
+                return None
             
             # Create assignment record
-            AssignmentData.create({
-                'ticket_id': ticket_id,
-                'assigned_to': self.ticket_data['assigned_to'],
-                'assignment_group': self.ticket_data['assignment_group']
-            })
+            try:
+                assignment_result = AssignmentData.create({
+                    'ticket_id': ticket_id,
+                    'assigned_to': self.ticket_data['assigned_to'],
+                    'assignment_group': self.ticket_data['assignment_group']
+                })
+                logger.info(f"Assignment created: {assignment_result}")
+            except Exception as assignment_error:
+                # DON'T FAIL the whole ticket for assignment errors
+                logger.warning(f"Assignment creation failed (non-fatal): {assignment_error}")
             
-            logger.info(f"Created ticket {ticket_id} from email {self.email_data.get('id', 'unknown')}")
+            logger.info(f"Successfully created ticket {ticket_id} from email {self.email_data.get('id', 'unknown')}")
             return ticket_id
             
         except Exception as e:
             logger.error(f"Error saving ticket: {e}")
+            # ADD THIS: Don't hide the error details
+            logger.error(f"Ticket data that failed to save: {self.ticket_data}")
             return None
     
     @classmethod
@@ -212,21 +263,31 @@ def push_ticket(ticket: Ticket) -> Optional[str]:
         ticket_id if successful, None if failed
     """
     try:
+        logger.info("=== STARTING PUSH_TICKET ===")
+        
         if not isinstance(ticket, Ticket):
             logger.error("Invalid ticket object provided to push_ticket")
             return None
         
+        logger.info("Ticket object is valid, calling save()...")
+        
         ticket_id = ticket.save()
         
         if ticket_id:
-            logger.info(f"Successfully pushed ticket {ticket_id}")
+            logger.info(f"✅ Successfully pushed ticket {ticket_id}")
         else:
-            logger.error("Failed to push ticket")
+            logger.error("❌ Failed to push ticket - save() returned None")
+            # ADD THIS: Try to get more info about why it failed
+            logger.error(f"Ticket object state: email_id={ticket.email_data.get('id')}")
+            logger.error(f"Action item state: {ticket.action_item.get('id', 'No ID')}")
         
         return ticket_id
         
     except Exception as e:
-        logger.error(f"Error in push_ticket: {e}")
+        logger.error(f"❌ Error in push_ticket: {e}")
+        # ADD THIS: More detailed error context
+        logger.error(f"Exception type: {type(e).__name__}")
+        logger.error(f"Exception args: {e.args}")
         return None
 
 # Additional utility functions for ticket management
@@ -291,3 +352,43 @@ def bulk_update_status(ticket_ids: List[str], status: TicketStatus, notes: str =
         'total_count': len(ticket_ids),
         'results': results
     }
+
+def debug_ticket_creation(email_data: Dict[str, Any], action_item: Dict[str, Any]) -> bool:
+    """
+    Debug function to test ticket creation step by step
+    ADD THIS FUNCTION to your manager.py
+    """
+    try:
+        logger.info("=== DEBUG TICKET CREATION ===")
+        logger.info(f"Email data: {email_data}")
+        logger.info(f"Action item: {action_item}")
+        
+        # Step 1: Create ticket object
+        logger.info("Step 1: Creating Ticket object...")
+        ticket = Ticket(email_data, action_item)
+        logger.info("✅ Ticket object created")
+        
+        # Step 2: Test validation
+        logger.info("Step 2: Testing validation...")
+        is_valid = ticket.validate()
+        logger.info(f"Validation result: {is_valid}")
+        
+        if not is_valid:
+            logger.error("❌ Validation failed, stopping debug")
+            return False
+        
+        # Step 3: Test save
+        logger.info("Step 3: Testing save...")
+        ticket_id = ticket.save()
+        logger.info(f"Save result: {ticket_id}")
+        
+        if ticket_id:
+            logger.info("✅ Ticket creation successful!")
+            return True
+        else:
+            logger.error("❌ Save failed")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Debug ticket creation failed: {e}")
+        return False

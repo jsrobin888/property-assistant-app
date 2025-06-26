@@ -1,6 +1,5 @@
 from ..plugin.ai.ai_response import *
 import random
-from ..config import CONFIG
 from ..llm_config import llm_config
 
 # Test the LangChain system

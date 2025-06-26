@@ -33,73 +33,46 @@ def process_new_emails(auto_replay_strategy=None, auto_create_tickets=True):
                 email_record = email_processor.process_email(email_data)
                 
                 if email_record:
-                    # Insert email record into TinyDB
-                    email_id = emails_table.insert({
-                        'sender': email_data['sender'],
-                        'subject': email_data['subject'],
-                        'content': email_data.get('content', ''),
-                        'received_at': datetime.now().isoformat(),
-                        'processed_at': datetime.now().isoformat(),
-                        **email_record  # Include any additional fields from email_processor
-                    })
-                    
+                    # Use the email_id returned by email_processor (UUID)
+                    email_id = email_record['email_id']
+
                     # Generate AI reply
-                    # reply_content, strategy_used = ai_responder.generate_reply(email_data)
-                    response_options = ai_responder.generate_reply(email_data)
+                    response_options = ai_responder.generate_reply(email_data, email_id)
                     
-                    # Save reply to TinyDB
+                    # Save reply to waiting zone
                     ai_response_id = save_ai_responses_to_waiting_zone(email_id, response_options)
-                    reply_id = ""
-                    #   reply_id = replies_table.insert(
-                    #    {
-                    #     'email_id': email_id,
-                    #     'content': reply_content,
-                    #     'strategy_used': strategy_used,
-                    #     'created_at': datetime.now().isoformat(),
-                    # })
                     
-                    logger.info(f"Processed email from {email_data['sender']} (Email ID: {email_id}, AI Response ID: {ai_response_id}),")
-                    auto_pick = auto_replay_strategy
-                    if auto_pick: 
+                    logger.info(f"Processed email from {email_data['sender']} (Email ID: {email_id}, AI Response ID: {ai_response_id})")
+                    
+                    # Auto-reply if requested
+                    if auto_replay_strategy:
                         for res in response_options:
-                            if auto_pick == "strategy_used":
+                            if auto_replay_strategy == "strategy_used":
                                 reply_id = replies_table.insert(res)
-                                logger.info(f"Processed auto reply email from {email_data['sender']} (Email ID: {email_id}, Reply ID: {reply_id}),")                                
+                                logger.info(f"Auto-replied to email {email_id} (Reply ID: {reply_id})")
                                 break
                                 
-                    # CREATE TICKETS FROM ACTION ITEMS (FIXED)
+                    # CREATE TICKETS FROM ACTION ITEMS 
                     if auto_create_tickets and email_record.get('action_items_count', 0) > 0:
                         try:
                             created_tickets = _create_tickets_from_action_items(email_data, email_id, email_record)
                             
                             if created_tickets:
-                                # Update email record with ticket info
+                                # Update email record with ticket info - use UUID email_id
+                                Email = Query()
                                 emails_table.update(
                                     {
                                         'tickets_created': created_tickets,
                                         'tickets_created_at': datetime.now().isoformat()
                                     }, 
-                                    doc_ids=[email_id]
+                                    Email.id == email_id  # Use UUID id, not doc_id
                                 )
                                 logger.info(f"Created {len(created_tickets)} tickets: {', '.join(created_tickets)}")
-                            
-                            # Push tickets to monitor or management workflows
-                            # TODO
-                            
-                            
                         except Exception as ticket_error:
                             logger.error(f"Error creating tickets for email {email_id}: {ticket_error}")
                     
-                    # # Send notifications 
-                    # notification_subject = f"New email from {email_data['sender']}"
-                    # notification_message = f"Subject: {email_data['subject']}\nReply generated using {strategy_used} strategy"
-                    # notifier_manager.notify_all(notification_subject, notification_message)
-                    # TODO
-                    
-                    
             except Exception as e:
                 logger.error(f"Error processing individual email: {e}")
-                # Note: TinyDB doesn't have rollback, but individual operations are atomic
         
     except Exception as e:
         logger.error(f"Error in process_new_emails: {e}")
@@ -145,23 +118,23 @@ def cleanup_old_records(days_old=30):
 def _create_tickets_from_action_items(email_data, email_id, email_record):
     """
     Create tickets from action items stored in database
-    This function gets the action items that were already created by email_processor
+    Use consistent email ID (UUID) throughout
     """
     created_tickets = []
     
     try:
-        # Get the actual email record from database to find the correct email ID
-        inserted_email = emails_table.get(doc_id=email_id)
-        actual_email_id = inserted_email.get('id', str(email_id))
+        # email_id is the UUID from email_record
+        # No need to get from database again
+        logger.info(f"Creating tickets for email {email_id}")
         
-        # Get action items from database (these were created by email_processor.process_email())
+        # Get action items from database using the UUID email_id
         ActionItem = Query()
-        action_items = action_items_table.search(ActionItem.email_id == actual_email_id)
+        action_items = action_items_table.search(ActionItem.email_id == email_id)
         
-        logger.info(f"Found {len(action_items)} action items for email {actual_email_id}")
+        logger.info(f"Found {len(action_items)} action items for email {email_id}")
         
         # Add email ID to email_data for ticket creation
-        email_data_with_id = {**email_data, 'id': actual_email_id}
+        email_data_with_id = {**email_data, 'id': email_id}
         
         for action_item in action_items:
             try:

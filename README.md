@@ -48,6 +48,8 @@ cp .env.local.copy .env.local   # fill in API keys: OPENAI_API_KEY, GMAIL_* …
 # 3. Run the API
 source .venv/bin/activate       # Windows: .venv\\Scripts\\activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+**FYI: Wait until shows "INFO:     Application startup complete."
 ```
 
 The interactive swagger UI will be available at [http://localhost:8000/docs](http://localhost:8000/docs) and ReDoc at `/redoc`.
@@ -71,7 +73,7 @@ python -c "import langchain_openai, numpy, fastapi, torch; print('✅ env looks 
 | `GMAIL_IMAP_HOST`, `GMAIL_USERNAME`, `GMAIL_PASSWORD`       | IMAP/GMAIL auth |   |
 | `SCHEDULER_MODE`                          | CRON Scheduler  | |
 | `USE_LOCAL_MODELS`                        | LLM Ollama      | boolean `true` or `false` |
-| `LOCAL_LLM_BASE_URL`                      | LLM Ollama      | `http://0.0.0.0:11434`    |
+| `LOCAL_AI_BASE_URL`                      | LLM Ollama      | `http://0.0.0.0:11434`    |
 | `LOG_LEVEL`                               | logging         |   |
 | `LOADER_VERIFICATION`                     | logging         |   |
 For local hacking you can leave **DATABASE\_URL** empty to fall back to in‑memory TinyDB.

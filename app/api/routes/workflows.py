@@ -199,7 +199,6 @@ async def fetch_gmail_emails(request: GmailFetchRequest):
 async def process_single_email(email_id: str):
     """
     Process a single email by ID
-    Useful for reprocessing or manual processing
     """
     try:
         # Get email from database
@@ -207,18 +206,64 @@ async def process_single_email(email_id: str):
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
-        # Process with email processor
+        logger.info(f"Processing email {email_id}: {email.get('subject', 'No subject')}")
+        
+        # FIX: Use EmailProcessor to properly process the email
+        from ...plugin.email.email_processor import EmailProcessor
         email_processor = EmailProcessor()
-        email_record = email_processor.process_email({
+        
+        # Prepare email data for processing
+        email_data = {
             "sender": email.get("sender"),
             "subject": email.get("subject"), 
-            "body": email.get("content", "")
-        })
+            "body": email.get("content", "") or email.get("body", "")  # Try both fields
+        }
+        
+        logger.info(f"Email data: sender={email_data['sender']}, subject={email_data['subject']}, body_length={len(email_data['body'])}")
+        
+        # FIX: Don't create a new email, just extract action items from existing one
+        action_items = email_processor._extract_action_items(email_data, email_id)
+        
+        logger.info(f"Extracted {len(action_items)} action items")
+        
+        # Save action items to database
+        from ...models import ActionItem, ActionStatus
+        for action_data in action_items:
+            ActionItem.create(
+                email_id=email_id,
+                action_data=action_data,
+                status=ActionStatus.OPEN
+            )
+            logger.info(f"Saved action item: {action_data.get('action', 'unknown')}")
+        
+        # Update email status to processed
+        from ...models import EmailMessage, EmailStatus
+        EmailMessage.update_status(email_id, EmailStatus.PROCESSED)
+        
+        # Update email record with processing info
+        from ...models import emails_table
+        from tinydb import Query
+        Email = Query()
+        
+        emails_table.update({
+            'action_items_count': len(action_items),
+            'status': EmailStatus.PROCESSED.value,
+            'processed_at': datetime.now().isoformat()
+        }, Email.id == email_id)
+        
+        processing_result = {
+            'email_id': email_id,
+            'action_items_count': len(action_items),
+            'status': EmailStatus.PROCESSED.value,
+            'processed_at': datetime.now().isoformat()
+        }
+        
+        logger.info(f"Successfully processed email {email_id}")
         
         return {
             "success": True,
             "email_id": email_id,
-            "processing_result": email_record
+            "processing_result": processing_result
         }
         
     except Exception as e:
@@ -278,16 +323,35 @@ async def generate_ai_responses_for_email(email_id: str):
 async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
     """
     Create tickets from a specific email's action items
-    Allows manual ticket creation control
     """
     try:
-        from ...plugin.email.process_emails import _create_tickets_from_action_items
-        from ...models import emails_table
+        logger.info(f"Creating tickets for email {request.email_id}")
         
         # Get email from database
         email = get_email_by_id(request.email_id)
         if not email:
+            logger.error(f"Email {request.email_id} not found")
             raise HTTPException(status_code=404, detail="Email not found")
+        
+        logger.info(f"Found email: {email.get('subject', 'No subject')}")
+        
+        # Get action items from database
+        from ...models import action_items_table
+        from tinydb import Query
+        
+        ActionItem = Query()
+        action_items = action_items_table.search(ActionItem.email_id == request.email_id)
+        
+        logger.info(f"Found {len(action_items)} action items for email {request.email_id}")
+        
+        if not action_items:
+            return {
+                "success": False,
+                "message": f"No action items found for email {request.email_id}",
+                "email_id": request.email_id,
+                "tickets_created": [],
+                "ticket_count": 0
+            }
         
         # Check if tickets already exist
         existing_tickets = email.get("tickets_created", [])
@@ -299,34 +363,102 @@ async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
                 "use_force_create": True
             }
         
-        # Create tickets
+        # Prepare email data for ticket creation
         email_data = {
             "sender": email.get("sender"),
             "subject": email.get("subject"),
-            "body": email.get("content", ""),
+            "body": email.get("content", "") or email.get("body", ""),
             "id": request.email_id
         }
         
-        email_record = {
-            "action_items_count": email.get("action_items_count", 0)
-        }
+        logger.info(f"Email data prepared: sender={email_data['sender']}")
         
-        created_tickets = _create_tickets_from_action_items(
-            email_data, 
-            int(request.email_id) if request.email_id.isdigit() else request.email_id,
-            email_record
-        )
+        # Create tickets from action items
+        created_tickets = []
+        errors = []
         
-        return {
-            "success": True,
+        for i, action_item in enumerate(action_items):
+            try:
+                logger.info(f"Creating ticket {i+1}/{len(action_items)} from action item {action_item.get('id')}")
+                logger.info(f"Action item data: {action_item.get('action_data', {})}")
+                
+                # Import ticket classes
+                from ...plugin.tickets.manager import Ticket, push_ticket
+                
+                # Create ticket instance
+                ticket = Ticket(email_data, action_item)
+                
+                # Validate ticket before saving
+                if not ticket.validate():
+                    error_msg = f"Ticket validation failed for action item {action_item.get('id')}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
+                
+                # Save ticket
+                ticket_id = push_ticket(ticket)
+                
+                if ticket_id:
+                    created_tickets.append(ticket_id)
+                    
+                    # Update action item with ticket reference
+                    action_items_table.update(
+                        {
+                            'ticket_id': ticket_id, 
+                            'ticket_created_at': datetime.now().isoformat()
+                        },
+                        ActionItem.id == action_item['id']
+                    )
+                    
+                    logger.info(f"✅ Created ticket {ticket_id} from action item {action_item.get('id')}")
+                else:
+                    error_msg = f"Failed to save ticket for action item {action_item.get('id')}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                
+            except Exception as action_error:
+                error_msg = f"Error creating ticket from action item {action_item.get('id')}: {action_error}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+                continue
+        
+        # Update email record with created tickets
+        if created_tickets:
+            from ...models import emails_table
+            Email = Query()
+            emails_table.update(
+                {
+                    'tickets_created': created_tickets,
+                    'tickets_created_at': datetime.now().isoformat()
+                }, 
+                Email.id == request.email_id
+            )
+            logger.info(f"Updated email {request.email_id} with {len(created_tickets)} tickets")
+        
+        # Return results
+        success = len(created_tickets) > 0
+        message = f"Created {len(created_tickets)} tickets from {len(action_items)} action items"
+        if errors:
+            message += f". {len(errors)} errors occurred."
+        
+        result = {
+            "success": success,
             "email_id": request.email_id,
             "tickets_created": created_tickets,
-            "ticket_count": len(created_tickets)
+            "ticket_count": len(created_tickets),
+            "message": message,
+            "action_items_processed": len(action_items)
         }
         
+        if errors:
+            result["errors"] = errors
+        
+        return result
+        
     except Exception as e:
-        logger.error(f"Error creating tickets from email {request.email_id}: {e}")
+        logger.error(f"Error in create_tickets_from_email_endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================================
 # WORKFLOW MANAGEMENT

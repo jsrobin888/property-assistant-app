@@ -36,6 +36,11 @@ class EmailSearchRequest(BaseModel):
     search_fields: List[str] = Field(["subject", "body", "sender"], description="Fields to search in")
     limit: int = Field(50, description="Maximum results to return")
 
+class BulkUpdateStatusRequest(BaseModel):
+    email_ids: List[str] = Field(..., description="List of email IDs to update")
+    new_status: str = Field(..., description="New status to set for all emails")
+    notes: Optional[str] = Field(None, description="Optional notes for the bulk update")
+
 # ============================================================================
 # EMAIL MANAGEMENT ENDPOINTS
 # ============================================================================
@@ -676,26 +681,22 @@ def _determine_next_actions(workflow_steps: Dict[str, bool], email: Dict, ai_res
 # ============================================================================
 
 @router.post("/bulk/update-status")
-async def bulk_update_email_status(
-    email_ids: List[str],
-    new_status: str,
-    notes: Optional[str] = None
-):
+async def bulk_update_email_status(request: BulkUpdateStatusRequest):
     """Update status for multiple emails"""
     try:
         updated_count = 0
         errors = []
         
-        for email_id in email_ids:
+        for email_id in request.email_ids:
             try:
                 # Update email status
                 update_data = {
-                    "status": new_status,
+                    "status": request.new_status,
                     "updated_at": datetime.now().isoformat()
                 }
                 
-                if notes:
-                    update_data["bulk_update_notes"] = notes
+                if request.notes:
+                    update_data["bulk_update_notes"] = request.notes
                 
                 # Update in database
                 if email_id.isdigit():
@@ -713,8 +714,8 @@ async def bulk_update_email_status(
         return {
             "success": True,
             "updated_count": updated_count,
-            "total_requested": len(email_ids),
-            "new_status": new_status,
+            "total_requested": len(request.email_ids),
+            "new_status": request.new_status,
             "errors": errors
         }
         
