@@ -111,8 +111,44 @@ python -c "import langchain_openai; print('✅ LangChain OpenAI installed')"
 python -c "import langchain_huggingface; print('✅ LangChain HuggingFace installed')"
 python -c "import sentence_transformers; print('✅ Sentence Transformers installed')"
 python -c "import numpy; print(f'✅ NumPy {numpy.__version__}')"
-python -m app.examples.use_cases.integration_cases full
+python -m app.examples.use_cases.integration_api_cases interactive
 ```
+
+Here's a short description for your README.md:
+
+### Integration API Testing & Examples
+
+```bash
+python -m app.examples.use_cases.integration_api_cases [command]
+```
+
+**Comprehensive API testing and demonstration suite for the Property Management System with AI Response capabilities.**
+
+#### Features:
+- **AI Response System Testing** - Generate, view, and select AI-powered email responses
+- **Workflow Management** - Test complete email processing workflows and monitoring
+- **Email-to-Ticket Pipeline** - Demonstrate automated ticket creation from email action items
+- **Bulk Operations** - Test bulk AI generation and status updates across multiple emails
+- **System Health Monitoring** - Check component health and performance metrics
+- **Interactive Demo Mode** - Guided testing with real-time API calls and results
+
+#### Available Commands:
+- `quick_start` - Health check + basic email/AI workflow test
+- `ai_demo` - Complete AI response generation and selection workflow
+- `workflow_demo` - End-to-end email processing and workflow management
+- `interactive` - Interactive menu-driven testing environment
+- `test_suite` - Comprehensive API testing across all components
+- `advanced` - High-volume processing and emergency response scenarios
+- `help` - Show detailed usage documentation
+
+#### Priority Areas Tested:
+1. 🤖 **AI Response Generation & Selection** (HIGH PRIORITY)
+2. ⚙️ **Workflow Control & Processing** (HIGH PRIORITY)  
+3. 📧 **Email Management with AI Integration**
+4. 🎫 **Ticket Management & Creation**
+5. 💾 **Database Operations & Analytics**
+
+**Default**: Runs interactive mode with guided testing options and real-time API demonstrations.
 
 
 ---
