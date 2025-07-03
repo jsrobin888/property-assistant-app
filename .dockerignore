@@ -68,3 +68,6 @@ README.md
 
 # Node modules (if any)
 node_modules/
+
+# Logs
+.logging/

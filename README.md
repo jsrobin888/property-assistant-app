@@ -57,7 +57,7 @@ The interactive swagger UI will be available at [http://localhost:8000/docs](htt
 ### One‑line sanity check
 
 ```bash
-python -c "import langchain_openai, numpy, fastapi, torch; print('✅ env looks good')"
+uv run python -c "import langchain_openai, numpy, fastapi, torch; print('✅ env looks good')"
 ```
 
 ---
@@ -107,11 +107,11 @@ docker-compose up --build
 ## 🧪 Quick Tests (optional)
 
 ```bash
-python -c "import langchain_openai; print('✅ LangChain OpenAI installed')"
-python -c "import langchain_huggingface; print('✅ LangChain HuggingFace installed')"
-python -c "import sentence_transformers; print('✅ Sentence Transformers installed')"
-python -c "import numpy; print(f'✅ NumPy {numpy.__version__}')"
-python -m app.examples.use_cases.integration_api_cases interactive
+uv run python -c "import langchain_openai; print('✅ LangChain OpenAI installed')"
+uv run python -c "import langchain_huggingface; print('✅ LangChain HuggingFace installed')"
+uv run python -c "import sentence_transformers; print('✅ Sentence Transformers installed')"
+uv run python -c "import numpy; print(f'✅ NumPy {numpy.__version__}')"
+uv run python -m app.examples.use_cases.integration_api_cases interactive
 ```
 
 Here's a short description for your README.md:
@@ -119,7 +119,7 @@ Here's a short description for your README.md:
 ### Integration API Testing & Examples
 
 ```bash
-python -m app.examples.use_cases.integration_api_cases [command]
+uv run python -m app.examples.use_cases.integration_api_cases [command]
 ```
 
 **Comprehensive API testing and demonstration suite for the Property Management System with AI Response capabilities.**

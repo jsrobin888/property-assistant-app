@@ -10,3 +10,5 @@ db.json
 *rar
 *7zp
 *test*.py
+
+.logging/
