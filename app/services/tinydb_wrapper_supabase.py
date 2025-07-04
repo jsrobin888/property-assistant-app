@@ -573,7 +573,7 @@ def migrate_from_tinydb(old_db_path: str = 'email_system.json'):
 # USAGE EXAMPLE & TESTING
 # =================================================================
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def test_postgresql_wrapper():

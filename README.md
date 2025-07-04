@@ -54,6 +54,19 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --timeout-keep-alive 60
 
 The interactive swagger UI will be available at [http://localhost:8000/docs](http://localhost:8000/docs) and ReDoc at `/redoc`.
 
+### Production Optimization
+
+```bash
+gunicorn app.main:app \
+    -k uvicorn.workers.UvicornWorker \
+    --workers=1 \
+    --threads=2 \
+    --timeout=30 \
+    --log-level=warning \
+    --max-requests=100 \
+    --max-requests-jitter=10
+```
+
 ### One‑line sanity check
 
 ```bash
