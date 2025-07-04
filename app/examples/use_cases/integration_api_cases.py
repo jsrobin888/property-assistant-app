@@ -247,8 +247,8 @@ class AIResponseExamples:
     def bulk_generate_ai_responses(email_ids: List[str]):
         """FIXED: Generate AI responses for multiple emails"""
         try:
-            # Ensure all IDs are strings
-            email_ids_list = [ensure_string_id(email_id) for email_id in email_ids]
+            # Ensure all IDs are strings and limit to 2 for bulk testing and recommend not exceeding 3 in single worker production
+            email_ids_list = [ensure_string_id(email_id) for email_id in email_ids][:2]
             
             # FIXED: Use the correct API pattern (direct list in body)
             result = make_api_call("POST", "/emails/bulk/generate-ai-responses", email_ids_list)

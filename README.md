@@ -112,7 +112,7 @@ uv run python -c "import langchain_openai; print('✅ LangChain OpenAI installed
 [not supported for heroku build] uv run python -c "import sentence_transformers; print('✅ Sentence Transformers installed')"
 [not supported for heroku build] uv run python -c "import numpy; print(f'✅ NumPy {numpy.__version__}')"
 uv run python -m app.services.tinydb_wrapper_supabase # new test for testing supabase and tinydb wrapper
-uv run python -m app.examples.use_cases.integration_api_cases interactive
+uv run python -m app.examples.use_cases.integration_api_cases 
 ```
 
 Here's a short description for your README.md:
@@ -132,15 +132,6 @@ uv run python -m app.examples.use_cases.integration_api_cases [command]
 - **Bulk Operations** - Test bulk AI generation and status updates across multiple emails
 - **System Health Monitoring** - Check component health and performance metrics
 - **Interactive Demo Mode** - Guided testing with real-time API calls and results
-
-#### Available Commands:
-- `quick_start` - Health check + basic email/AI workflow test
-- `ai_demo` - Complete AI response generation and selection workflow
-- `workflow_demo` - End-to-end email processing and workflow management
-- `interactive` - Interactive menu-driven testing environment
-- `test_suite` - Comprehensive API testing across all components
-- `advanced` - High-volume processing and emergency response scenarios
-- `help` - Show detailed usage documentation
 
 #### Priority Areas Tested:
 1. 🤖 **AI Response Generation & Selection** (HIGH PRIORITY)
