@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     log_level: str = os.getenv("LOG_LEVEL")
     
     # LLM Settings
-    preferred_models:list[str] = ['gpt-4o', 'claude-3-sonnet', 'qwen2.5']
+    preferred_models:list[str] = ['gpt-4o-mini', 'claude-3-sonnet', 'qwen2.5']
     use_local_models: bool = os.getenv("USE_LOCAL_MODELS", "false").lower() == "true" # Enable local models via Ollama
     local_ai_base_url: str = os.getenv("LOCAL_AI_BASE_URL", "http://0.0.0.0:11434")
     
