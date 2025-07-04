@@ -1,8 +1,1 @@
-web: gunicorn app.main:app \
-    -k uvicorn.workers.UvicornWorker \
-    --workers=1 \
-    --threads=2 \
-    --timeout=30 \
-    --log-level=warning \
-    --max-requests=100 \
-    --max-requests-jitter=10
+web: gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers=1 --threads=2 --timeout=30 --log-level=warning --max-requests=100 --max-requests-jitter=10
