@@ -2,12 +2,12 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from enum import Enum
-from tinydb import TinyDB, Query
+from app.services.tinydb_wrapper_supabase import TinyDB, Query
 import hashlib
 import uuid
 
 # Initialize TinyDB
-db = TinyDB('email_system.json')
+db = TinyDB()
 
 # Define tables
 emails_table = db.table('emails')

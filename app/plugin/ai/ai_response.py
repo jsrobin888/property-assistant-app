@@ -4,7 +4,7 @@ import uuid
 import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from tinydb import TinyDB, Query
+from app.services.tinydb_wrapper_supabase import TinyDB, Query
 from ...models import db, ai_responses_table
 
 # Lightweight imports - only cloud APIs

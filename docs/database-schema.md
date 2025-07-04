@@ -363,7 +363,7 @@ def run_initial_tests():
         print("   ✓ Core dependencies imported successfully")
         
         # Test database creation
-        from tinydb import TinyDB
+        from app.services.turso_tinydb import TinyDB
         test_db = TinyDB('test_db.json')
         test_db.insert({'test': 'data'})
         test_db.close()
@@ -915,7 +915,7 @@ def gdpr_data_export(tenant_email: str) -> Dict[str, Any]:
     """Export all data for a tenant (GDPR compliance)"""
     
     from app.models import emails_table, replies_table, tenants_table
-    from tinydb import Query
+    from app.services.turso_tinydb import Query
     
     Email = Query()
     Reply = Query()

@@ -242,7 +242,7 @@ async def process_single_email(email_id: str):
         
         # Update email record with processing info
         from ...models import emails_table
-        from tinydb import Query
+        from app.services.tinydb_wrapper_supabase import Query
         Email = Query()
         
         emails_table.update({
@@ -337,7 +337,7 @@ async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
         
         # Get action items from database
         from ...models import action_items_table
-        from tinydb import Query
+        from app.services.tinydb_wrapper_supabase import Query
         
         ActionItem = Query()
         action_items = action_items_table.search(ActionItem.email_id == request.email_id)

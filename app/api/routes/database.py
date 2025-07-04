@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query as QueryParam
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from tinydb import Query
+from app.services.tinydb_wrapper_supabase import Query
 
 # Import database tables and models
 from ...models import (

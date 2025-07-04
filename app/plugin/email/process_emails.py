@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from tinydb import TinyDB, Query
+from app.services.tinydb_wrapper_supabase import TinyDB, Query
 from .gmail_client import GmailClient
 from ...models import db, emails_table,replies_table, action_items_table
 from .email_processor import EmailProcessor

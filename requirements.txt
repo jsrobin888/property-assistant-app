@@ -17,3 +17,6 @@ anthropic==0.57.1
 psycopg2-binary==2.9.10
 sqlalchemy==2.0.41
 uvicorn==0.35.0
+
+# sqlite libsql dependencies
+libsql-client==0.3.1

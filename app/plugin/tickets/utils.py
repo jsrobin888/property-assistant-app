@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import logging
 
 from .models import TicketData, tickets_table, ticket_assignments_table, TicketStatus
-from tinydb import Query
+from app.services.tinydb_wrapper_supabase import Query
 
 logger = logging.getLogger(__name__)
 

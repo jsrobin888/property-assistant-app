@@ -4,7 +4,7 @@ Handles ticket-related database operations and data structures
 """
 
 from enum import Enum
-from tinydb import TinyDB, Query
+from app.services.tinydb_wrapper_supabase import TinyDB, Query
 from typing import Dict, Any, List, Optional
 import uuid
 from datetime import datetime

@@ -15,7 +15,7 @@ from ...plugin.ai.ai_response import (
     LangChainAIResponder
 )
 from ...models import emails_table, replies_table, ai_responses_table
-from tinydb import Query
+from app.services.tinydb_wrapper_supabase import Query
 
 from ...llm_config import llm_config
 

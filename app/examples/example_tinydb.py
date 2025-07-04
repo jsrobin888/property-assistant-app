@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from tinydb import TinyDB, Query
+from app.services.tinydb_wrapper_supabase import TinyDB, Query
 
 app = FastAPI()
-db = TinyDB("test_db.json")
+db = TinyDB()
 User = Query()
 
 class UserModel(BaseModel):

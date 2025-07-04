@@ -2,7 +2,7 @@
 """
 Comprehensive API Examples for Property Management System
 Focus: AI Response System & Workflow Management
-Base URL: http://localhost:8000 or http://127.0.0.1:8000
+Base URL: CONFIG.base_url_interactive_cli or http://localhost:8000 or http://127.0.0.1:8000
 
 Priority Areas:
 1. AI Response Generation & Selection (HIGH PRIORITY)
@@ -18,12 +18,13 @@ import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
-
+from ...config import CONFIG
 # =============================================================================
 # CONFIGURATION & UTILITIES
 # =============================================================================
 
-BASE_URL = "http://localhost:8000/api/v1"
+BASE_URL = f"{CONFIG.base_url_interactive_cli}/api/v1"
+# Alternative: BASE_URL = "http://localhost:8000/api/v1"
 # Alternative: BASE_URL = "http://127.0.0.1:8000/api/v1"
 
 HEADERS = {
@@ -1434,7 +1435,7 @@ def print_usage_documentation():
 {'🚀 PROPERTY MANAGEMENT API EXAMPLES 🚀':=^80}
 
 BASE URLS:
-- http://localhost:8000/api/v1
+- {BASE_URL}
 - http://127.0.0.1:8000/api/v1
 
 HIGH PRIORITY ENDPOINTS (AI & WORKFLOW FOCUS):
@@ -1499,10 +1500,10 @@ EXAMPLE USAGE:
 CURL EXAMPLES:
 
 # Health Check
-curl -X GET http://localhost:8000/api/v1/workflows/health-check
+curl -X GET {BASE_URL}/workflows/health-check
 
 # Create Email
-curl -X POST http://localhost:8000/api/v1/database/emails \\
+curl -X POST {BASE_URL}/database/emails \\
      -H "Content-Type: application/json" \\
      -d '{{
        "sender": "test@example.com",
@@ -1512,13 +1513,13 @@ curl -X POST http://localhost:8000/api/v1/database/emails \\
      }}'
 
 # Generate AI Response  
-curl -X POST http://localhost:8000/api/v1/emails/EMAIL_ID/regenerate-ai-responses
+curl -X POST {BASE_URL}/emails/EMAIL_ID/regenerate-ai-responses
 
 # View AI Options
-curl -X GET http://localhost:8000/api/v1/emails/EMAIL_ID/ai-responses
+curl -X GET {BASE_URL}/emails/EMAIL_ID/ai-responses
 
 # Select AI Response
-curl -X POST http://localhost:8000/api/v1/emails/EMAIL_ID/ai-responses/select \\
+curl -X POST {BASE_URL}/emails/EMAIL_ID/ai-responses/select \\
      -H "Content-Type: application/json" \\
      -d '{{
        "option_id": "OPTION_ID",
@@ -1526,7 +1527,7 @@ curl -X POST http://localhost:8000/api/v1/emails/EMAIL_ID/ai-responses/select \\
      }}'
 
 # Get Database Stats
-curl -X GET http://localhost:8000/api/v1/database/stats
+curl -X GET {BASE_URL}/database/stats
 
 🎯 PRIORITY TESTING ORDER:
 1. System Health Check

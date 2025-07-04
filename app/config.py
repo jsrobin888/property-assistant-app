@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     use_local_models: bool = False # Local models are not supported in heroku environment due to environment constraints
     local_ai_base_url: str = os.getenv("LOCAL_AI_BASE_URL", "http://0.0.0.0:11434")
     
-    
+    base_url_interactive_cli:str = os.getenv("BASE_URL_INTERACTIVE_CLI", "http://localhost:8000/api/v1")
+
     def __str__(self):
         test_load = os.getenv("LOADER_VERIFICATION")
         msg = f"Load verification will show as: <{test_load}>"
