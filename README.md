@@ -108,9 +108,9 @@ docker-compose up --build
 
 ```bash
 uv run python -c "import langchain_openai; print('✅ LangChain OpenAI installed')"
-uv run python -c "import langchain_huggingface; print('✅ LangChain HuggingFace installed')"
-uv run python -c "import sentence_transformers; print('✅ Sentence Transformers installed')"
-uv run python -c "import numpy; print(f'✅ NumPy {numpy.__version__}')"
+[not supported for heroku build] uv run python -c "import langchain_huggingface; print('✅ LangChain HuggingFace installed')"
+[not supported for heroku build] uv run python -c "import sentence_transformers; print('✅ Sentence Transformers installed')"
+[not supported for heroku build] uv run python -c "import numpy; print(f'✅ NumPy {numpy.__version__}')"
 uv run python -m app.examples.use_cases.integration_api_cases interactive
 ```
 

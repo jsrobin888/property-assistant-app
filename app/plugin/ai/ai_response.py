@@ -1,28 +1,36 @@
 import logging
 import json
 import uuid
+import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from tinydb import TinyDB, Query
 from ...models import db, ai_responses_table
-# Modern LangChain imports
+
+# Lightweight imports - only cloud APIs
 try:
     from langchain_openai import ChatOpenAI, OpenAIEmbeddings
     from langchain_anthropic import ChatAnthropic
-    from langchain_ollama import ChatOllama
-    from langchain_community.embeddings import HuggingFaceEmbeddings
-    from langchain_community.vectorstores import FAISS
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    from langchain.chains import RetrievalQA
     from langchain_core.prompts import PromptTemplate
-    from langchain_core.documents import Document
     from langchain_core.messages import HumanMessage
-    from langchain_core.output_parsers import StrOutputParser
     LANGCHAIN_AVAILABLE = True
 except ImportError as e:
     LANGCHAIN_AVAILABLE = False
     print(f"LangChain not available: {e}")
-    print("Install with: pip install langchain-openai langchain-anthropic langchain-ollama langchain-community")
+    print("Install with: pip install langchain-openai langchain-anthropic langchain-core")
+
+# Direct API imports as fallback
+try:
+    import openai
+    OPENAI_DIRECT_AVAILABLE = True
+except ImportError:
+    OPENAI_DIRECT_AVAILABLE = False
+
+try:
+    import anthropic
+    ANTHROPIC_DIRECT_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_DIRECT_AVAILABLE = False
 
 from ...models import (
     emails_table, 
@@ -35,183 +43,180 @@ import re
 from email.message import EmailMessage as EmailMsgFunc
 from email.utils import parseaddr
 
-
 logger = logging.getLogger(__name__)
 
-class LangChainRAGSystem:
-    """LangChain-based RAG system with vector store"""
+# Feature flags for conditional loading
+FEATURES = {
+    'use_vector_search': os.getenv('USE_VECTOR_SEARCH', 'false').lower() == 'true',
+    'use_openai_embeddings': os.getenv('USE_OPENAI_EMBEDDINGS', 'false').lower() == 'true',
+    'use_direct_apis': os.getenv('USE_DIRECT_APIS', 'true').lower() == 'true',
+}
+
+class LightweightRAGSystem:
+    """Lightweight RAG system using keyword matching instead of vector embeddings"""
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self.knowledge_base = self._init_knowledge_base()
         
-        # Initialize embeddings
-        self.embeddings = self._init_embeddings()
-        
-        # Initialize vector store
-        self.vector_store = None
-        self._init_vector_store()
-        
-        # Text splitter for documents
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50
-        )
+        # Only use OpenAI embeddings if explicitly enabled and available
+        self.embeddings = None
+        if FEATURES['use_openai_embeddings'] and self.config.get('openai_api_key'):
+            self.embeddings = self._init_embeddings()
     
     def _init_embeddings(self):
-        """Initialize embeddings model with modern LangChain"""
+        """Initialize OpenAI embeddings only if enabled"""
         try:
-            if self.config.get('openai_api_key'):
+            if LANGCHAIN_AVAILABLE:
                 return OpenAIEmbeddings(
                     api_key=self.config['openai_api_key'],
-                    model="text-embedding-3-small"  # Latest embedding model
-                )
-            else:
-                # Use local embeddings
-                return HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                    model="text-embedding-3-small"
                 )
         except Exception as e:
-            logger.warning(f"Could not initialize embeddings: {e}")
-            return None
+            logger.warning(f"Could not initialize OpenAI embeddings: {e}")
+        return None
     
-    def _init_vector_store(self):
-        """Initialize vector store with property management knowledge"""
-        if not self.embeddings:
-            return
-        
-        try:
-            # Property management knowledge base
-            # Domestic Docu manage
-            documents = [
-                Document(metadata={"type": "maintenance"}, page_content="Standard maintenance requests are handled within 24-48 hours during business days (Monday-Friday, 9 AM - 6 PM)."),
-                Document(metadata={"type": "emergency"}, page_content="Emergency repairs (flooding, gas leaks, electrical hazards, heating/cooling failures) are addressed immediately 24/7."),
-                Document(metadata={"type": "maintenance"}, page_content="For maintenance requests, call (555) 123-4567 or submit online at portal.property.com/maintenance."),
-                Document(metadata={"type": "rent"}, page_content="Rent is due on the 1st of each month. Grace period until the 5th without late fees."),
-                Document(metadata={"type": "rent"}, page_content="Late fees of $50 apply after the 5th of the month. Additional $25 fee for each subsequent week."),
-                Document(metadata={"type": "rent"}, page_content="Accepted payment methods: online portal, ACH transfer, certified check, money order. Cash not accepted."),
-                Document(metadata={"type": "lockout"}, page_content="During business hours (9 AM - 6 PM), contact office at (555) 123-4567 for lockout assistance."),
-                Document(metadata={"type": "lockout"}, page_content="After hours lockout service: call emergency line (555) 123-4567. Service fee: $75 weekdays, $100 weekends/holidays."),
-                Document(metadata={"type": "emergency"}, page_content="Emergency maintenance: (555) 123-4567 (available 24/7 for true emergencies only)."),
-                Document(metadata={"type": "general"}, page_content="Office hours: Monday-Friday 9 AM - 6 PM, Saturday 10 AM - 4 PM, Closed Sundays."),
-                Document(metadata={"type": "general"}, page_content="Main office: (555) 123-4567, Email: info@property.com"),
+    def _init_knowledge_base(self) -> Dict[str, List[str]]:
+        """Initialize lightweight knowledge base with keyword mapping"""
+        return {
+            'maintenance': [
+                "Standard maintenance requests are handled within 24-48 hours during business days (Monday-Friday, 9 AM - 6 PM).",
+                "For maintenance requests, call (555) 123-4567 or submit online at portal.property.com/maintenance.",
+                "Emergency repairs (flooding, gas leaks, electrical hazards, heating/cooling failures) are addressed immediately 24/7."
+            ],
+            'rent': [
+                "Rent is due on the 1st of each month. Grace period until the 5th without late fees.",
+                "Late fees of $50 apply after the 5th of the month. Additional $25 fee for each subsequent week.",
+                "Accepted payment methods: online portal, ACH transfer, certified check, money order. Cash not accepted."
+            ],
+            'lockout': [
+                "During business hours (9 AM - 6 PM), contact office at (555) 123-4567 for lockout assistance.",
+                "After hours lockout service: call emergency line (555) 123-4567. Service fee: $75 weekdays, $100 weekends/holidays."
+            ],
+            'emergency': [
+                "Emergency maintenance: (555) 123-4567 (available 24/7 for true emergencies only).",
+                "Emergency repairs (flooding, gas leaks, electrical hazards, heating/cooling failures) are addressed immediately 24/7."
+            ],
+            'general': [
+                "Office hours: Monday-Friday 9 AM - 6 PM, Saturday 10 AM - 4 PM, Closed Sundays.",
+                "Main office: (555) 123-4567, Email: info@property.com"
             ]
-            
-            # Create vector store
-            self.vector_store = FAISS.from_documents(documents, self.embeddings)
-            logger.info("Initialized FAISS vector store with property management knowledge")
-            
-        except Exception as e:
-            logger.error(f"Error initializing vector store: {e}")
-            self.vector_store = None
+        }
     
     def retrieve_context(self, query: str, k: int = 3) -> List[str]:
-        """Retrieve relevant context using vector similarity"""
-        if not self.vector_store:
-            return []
+        """Retrieve relevant context using keyword matching"""
+        query_lower = query.lower()
+        relevant_docs = []
         
-        try:
-            docs = self.vector_store.similarity_search(query, k=k)
-            return [doc.page_content for doc in docs]
-        except Exception as e:
-            logger.error(f"Error retrieving context: {e}")
-            return []
+        # Simple keyword matching
+        for category, docs in self.knowledge_base.items():
+            category_keywords = {
+                'maintenance': ['broken', 'fix', 'repair', 'maintenance', 'leak', 'broken'],
+                'rent': ['rent', 'payment', 'late fee', 'balance', 'due'],
+                'lockout': ['locked out', 'lost key', 'keys', 'access', 'lockout'],
+                'emergency': ['emergency', 'urgent', 'flooding', 'gas leak', 'electrical'],
+                'general': ['office', 'hours', 'contact', 'phone', 'email']
+            }
+            
+            if any(keyword in query_lower for keyword in category_keywords.get(category, [])):
+                relevant_docs.extend(docs)
+        
+        # Return most relevant docs (limit to k)
+        return relevant_docs[:k] if relevant_docs else self.knowledge_base['general'][:k]
 
-class LangChainLLMManager:
-    """LangChain-based LLM manager supporting multiple models"""
+# Keep original class name for compatibility
+class LangChainRAGSystem(LightweightRAGSystem):
+    """Alias for backward compatibility"""
+    pass
+
+class LightweightLLMManager:
+    """Lightweight LLM manager using only cloud APIs"""
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.models = {}
-                
-        # Initialize available models
         self._init_models()
-        print(self.config)
         
     def _init_models(self):
-        """Initialize all available LLM models with modern LangChain"""
+        """Initialize only cloud-based models"""
         
-        # OpenAI models
-        if self.config.get('openai_api_key'):
+        # OpenAI models via LangChain
+        if LANGCHAIN_AVAILABLE and self.config.get('openai_api_key'):
             try:
-                self.models['openai_gpt35'] = ChatOpenAI(
-                    model="gpt-3.5-turbo",
-                    api_key=self.config['openai_api_key'],
-                    temperature=0.7,
-                    max_completion_tokens=2000
-                )
-                self.models['openai_gpt4'] = ChatOpenAI(
-                    model="gpt-4",
-                    api_key=self.config['openai_api_key'],
-                    temperature=0.7,
-                    max_completion_tokens=2000
-                )
-                self.models['openai_gpt4o'] = ChatOpenAI(
-                    model="gpt-4o",
-                    api_key=self.config['openai_api_key'],
-                    temperature=0.7,
-                    max_completion_tokens=2000
-                )
-                self.models['openai_gpt4o_mini'] = ChatOpenAI(
-                    model="gpt-4o-mini",
-                    api_key=self.config['openai_api_key'],
-                    temperature=0.7,
-                    max_completion_tokens=2000
-                )
-                logger.info("Initialized OpenAI models (GPT-3.5, GPT-4, GPT-4o)")
-            except Exception as e:
-                logger.error(f"Error initializing OpenAI: {e}")
-        
-        # Anthropic models
-        if self.config.get('anthropic_api_key'):
-            try:
-                self.models['anthropic_claude3_haiku'] = ChatAnthropic(
-                    model="claude-3-haiku-20240307",
-                    api_key=self.config['anthropic_api_key'],
-                    temperature=0.7,
-                    max_tokens_to_sample=2000
-                    
-                )
-                self.models['anthropic_claude3_sonnet'] = ChatAnthropic(
-                    model="claude-3-sonnet-20240229",
-                    api_key=self.config['anthropic_api_key'],
-                    temperature=0.7,
-                    max_tokens_to_sample=2000
-                )
-                logger.info("Initialized Anthropic models (Claude-3 Haiku, Sonnet)")
-            except Exception as e:
-                logger.error(f"Error initializing Anthropic: {e}")
-        
-        # Local models via Ollama
-        if self.config.get('use_local_models') and self.config.get("base_url"):
-            try:
-                # Try common local models available in Ollama
-                local_models = [
-                    # ('llama3.1', 'llama3.1:8b'),
-                    # ('llama3', 'llama3:8b'),
-                    # ('mistral', 'mistral:7b'),
-                    # ('codellama', 'codellama:7b'),
-                    # ('phi3', 'phi3:mini'),
-                    ('qwen2.5','qwen2.5:14b')
+                models_to_init = [
+                    ('openai_gpt4o_mini', 'gpt-4o-mini'),
+                    ('openai_gpt4o', 'gpt-4o'),
+                    ('openai_gpt35', 'gpt-3.5-turbo'),
                 ]
                 
-                for model_key, model_name in local_models:
+                for model_key, model_name in models_to_init:
                     try:
-                        self.models[f'local_{model_key}'] = ChatOllama(
+                        self.models[model_key] = ChatOpenAI(
                             model=model_name,
+                            api_key=self.config['openai_api_key'],
                             temperature=0.7,
-                            base_url=self.config.get("base_url"),
-                            num_ctx=2000,
+                            max_tokens=2000
                         )
-                        logger.info(f"Initialized local model: {model_name}")
-                        break  # Use first available local model
                     except Exception as e:
                         logger.debug(f"Could not initialize {model_name}: {e}")
                         continue
+                
+                logger.info(f"Initialized {len([k for k in self.models.keys() if k.startswith('openai')])} OpenAI models")
             except Exception as e:
-                logger.error(f"Error initializing local models: {e}")
-        else:
-          logger.error("<use_local_models> is 'False' or missing base_url ")
-        logger.info(f"Initialized {len(self.models)} LLM models: {list(self.models.keys())}")
+                logger.error(f"Error initializing OpenAI models: {e}")
+        
+        # Anthropic models via LangChain
+        if LANGCHAIN_AVAILABLE and self.config.get('anthropic_api_key'):
+            try:
+                anthropic_models = [
+                    ('anthropic_claude3_haiku', 'claude-3-haiku-20240307'),
+                    ('anthropic_claude3_sonnet', 'claude-3-sonnet-20240229'),
+                ]
+                
+                for model_key, model_name in anthropic_models:
+                    try:
+                        self.models[model_key] = ChatAnthropic(
+                            model=model_name,
+                            api_key=self.config['anthropic_api_key'],
+                            temperature=0.7,
+                            max_tokens=2000
+                        )
+                    except Exception as e:
+                        logger.debug(f"Could not initialize {model_name}: {e}")
+                        continue
+                
+                logger.info(f"Initialized {len([k for k in self.models.keys() if k.startswith('anthropic')])} Anthropic models")
+            except Exception as e:
+                logger.error(f"Error initializing Anthropic models: {e}")
+        
+        # Direct API fallbacks
+        if FEATURES['use_direct_apis']:
+            self._init_direct_apis()
+        
+        logger.info(f"Initialized {len(self.models)} total models: {list(self.models.keys())}")
+    
+    def _init_direct_apis(self):
+        """Initialize direct API clients as fallback"""
+        
+        # Direct OpenAI API
+        if OPENAI_DIRECT_AVAILABLE and self.config.get('openai_api_key'):
+            try:
+                self.openai_client = openai.OpenAI(api_key=self.config['openai_api_key'])
+                if not any(k.startswith('openai') for k in self.models.keys()):
+                    self.models['openai_direct'] = 'direct_openai'
+                    logger.info("Initialized direct OpenAI API")
+            except Exception as e:
+                logger.error(f"Error initializing direct OpenAI: {e}")
+        
+        # Direct Anthropic API
+        if ANTHROPIC_DIRECT_AVAILABLE and self.config.get('anthropic_api_key'):
+            try:
+                self.anthropic_client = anthropic.Anthropic(api_key=self.config['anthropic_api_key'])
+                if not any(k.startswith('anthropic') for k in self.models.keys()):
+                    self.models['anthropic_direct'] = 'direct_anthropic'
+                    logger.info("Initialized direct Anthropic API")
+            except Exception as e:
+                logger.error(f"Error initializing direct Anthropic: {e}")
     
     def get_model(self, model_name: str):
         """Get specific model instance"""
@@ -222,47 +227,70 @@ class LangChainLLMManager:
         return list(self.models.keys())
     
     def generate_response(self, model_name: str, prompt: str) -> str:
-        """Generate response using specified model with modern LangChain"""
+        """Generate response using specified model"""
         model = self.get_model(model_name)
         if not model:
             raise ValueError(f"Model {model_name} not available")
         
         try:
-            # Modern LangChain approach
-            messages = [HumanMessage(content=prompt)]
-            response = model.invoke(messages)
+            # LangChain models
+            if hasattr(model, 'invoke'):
+                messages = [HumanMessage(content=prompt)]
+                response = model.invoke(messages)
+                return response.content if hasattr(response, 'content') else str(response)
             
-            # Extract content from response
-            if hasattr(response, 'content'):
-                return response.content
+            # Direct API models
+            elif model_name == 'openai_direct':
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=2000,
+                    temperature=0.7
+                )
+                return response.choices[0].message.content
+            
+            elif model_name == 'anthropic_direct':
+                response = self.anthropic_client.messages.create(
+                    model="claude-3-haiku-20240307",
+                    max_tokens=2000,
+                    temperature=0.7,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                return response.content[0].text
+            
             else:
-                return str(response)
+                raise ValueError(f"Unknown model type: {model_name}")
                 
         except Exception as e:
             logger.error(f"Error generating response with {model_name}: {e}")
             raise
 
-class LangChainAIResponder:
-    """Main AI responder using LangChain with multiple models"""
+# Keep original class name for compatibility
+class LangChainLLMManager(LightweightLLMManager):
+    """Alias for backward compatibility"""
+    pass
+
+class LightweightAIResponder:
+    """Lightweight AI responder using only cloud APIs"""
     
     def __init__(self, config: Dict[str, Any]):
-        if not LANGCHAIN_AVAILABLE:
-            raise ImportError("LangChain is required. Install with: pip install langchain")
-        
         self.config = config
-        self.rag_system = LangChainRAGSystem(config)
-        self.llm_manager = LangChainLLMManager(config)
-        
-        # Response templates
+        self.rag_system = LightweightRAGSystem(config)
+        self.llm_manager = LightweightLLMManager(config)
         self.templates = self._init_templates()
-
-    def _init_templates(self) -> Dict[str, PromptTemplate]:
-        """Initialize LangChain prompt templates with modern syntax"""
         
-        # RAG template
-        rag_template = PromptTemplate(
-            input_variables=["context", "question", "tenant_name"],
-            template="""You are a professional property management assistant.
+        # Fallback check
+        if not self.llm_manager.get_available_models():
+            logger.warning("No AI models available. Only template responses will work.")
+    
+    def _init_templates(self) -> Dict[str, PromptTemplate]:
+        """Initialize prompt templates"""
+        
+        if LANGCHAIN_AVAILABLE:
+            # LangChain templates
+            rag_template = PromptTemplate(
+                input_variables=["context", "question", "tenant_name"],
+                template="""You are a professional property management assistant.
 
 Context:
 {context}
@@ -272,60 +300,60 @@ From: {tenant_name}
 Question: {question}
 
 Response:"""
-        )
-        
-        # Direct LLM template
-        direct_template = PromptTemplate(
-            input_variables=["email_content", "tenant_name"],
-            template="""You are a professional property management assistant. Write a helpful, empathetic response to this tenant email:
+            )
+            
+            direct_template = PromptTemplate(
+                input_variables=["email_content", "tenant_name"],
+                template="""You are a professional property management assistant. Write a helpful, empathetic response to this tenant email:
 
 From: {tenant_name}
 Email: {email_content}
 
 Write a professional response addressing their concern:"""
-        )
-        
-        # Template-based response
-        template_based = PromptTemplate(
-            input_variables=["issue_type", "tenant_name", "specific_issue"],
-            template="""Dear {tenant_name},
+            )
+        else:
+            # Simple string templates
+            rag_template = """You are a professional property management assistant.
 
-Thank you for contacting us about {specific_issue}.
+Context:
+{context}
 
-Based on the type of issue ({issue_type}), here is our response:
+Write a helpful, professional response to this tenant inquiry:
+From: {tenant_name}
+Question: {question}
 
-{{Generate appropriate response based on issue type}}
+Response:"""
+            
+            direct_template = """You are a professional property management assistant. Write a helpful, empathetic response to this tenant email:
 
-Best regards,
-Property Management Team"""
-        )
+From: {tenant_name}
+Email: {email_content}
+
+Write a professional response addressing their concern:"""
         
         return {
             'rag': rag_template,
-            'direct': direct_template,
-            'template': template_based
+            'direct': direct_template
         }
     
     def generate_reply(self, email_data: Dict[str, Any], email_id: str) -> List[Dict[str, Any]]:
         """Generate multiple response options using different strategies"""
         
         responses = []
-        tenant_name = self._extract_tenant_name(email_data.get('sender', ''), )
+        tenant_name = self._extract_tenant_name(email_data.get('sender', ''))
         email_content = f"Subject: {email_data.get('subject', '')}\n{email_data.get('body', '')}"
-        query = email_content
         
-        # 1. RAG-based response (if vector store available)
-        if self.rag_system.vector_store:
-            rag_response = self._generate_rag_response(query, tenant_name)
-            if rag_response:
-                responses.append({
-                    'email_id': email_id,
-                    'content': rag_response,
-                    'strategy_used': 'rag',
-                    'provider': 'langchain_faiss',
-                    'confidence': 0.85,
-                    'created_at': datetime.now().isoformat()
-                })
+        # 1. RAG-based response (using keyword matching)
+        rag_response = self._generate_rag_response(email_content, tenant_name)
+        if rag_response:
+            responses.append({
+                'email_id': email_id,
+                'content': rag_response,
+                'strategy_used': 'rag',
+                'provider': 'lightweight_rag',
+                'confidence': 0.85,
+                'created_at': datetime.now().isoformat()
+            })
         
         # 2. Direct LLM responses from available models
         available_models = self.llm_manager.get_available_models()
@@ -335,19 +363,20 @@ Property Management Team"""
             try:
                 llm_response = self._generate_llm_response(model_name, email_content, tenant_name)
                 if llm_response:
+                    confidence = 0.9 if 'gpt4' in model_name else 0.8 if 'claude' in model_name else 0.7
                     responses.append({
                         'email_id': email_id,
                         'content': llm_response,
                         'strategy_used': 'llm',
                         'provider': model_name,
-                        'confidence': 0.8 if 'gpt4' in model_name else 0.7,
+                        'confidence': confidence,
                         'created_at': datetime.now().isoformat()
                     })
             except Exception as e:
                 logger.error(f"Error with model {model_name}: {e}")
                 continue
         
-        # 3. Template-based response (fallback)
+        # 3. Template-based response (always available fallback)
         template_response = self._generate_template_response(email_data, tenant_name)
         responses.append({
             'email_id': email_id,
@@ -363,11 +392,11 @@ Property Management Team"""
             response['option_id'] = str(uuid.uuid4())
             response['option_index'] = i
         
-        logger.info(f"Generated {len(responses)} response options using LangChain")
+        logger.info(f"Generated {len(responses)} response options")
         return responses
     
     def _generate_rag_response(self, query: str, tenant_name: str) -> str:
-        """Generate RAG-based response using vector retrieval"""
+        """Generate RAG-based response using keyword matching"""
         try:
             # Retrieve relevant context
             context_docs = self.rag_system.retrieve_context(query, k=3)
@@ -379,11 +408,20 @@ Property Management Team"""
                 return None
             
             model_name = available_models[0]
-            prompt = self.templates['rag'].format(
-                context=context,
-                question=query,
-                tenant_name=tenant_name
-            )
+            
+            # Format prompt
+            if LANGCHAIN_AVAILABLE and hasattr(self.templates['rag'], 'format'):
+                prompt = self.templates['rag'].format(
+                    context=context,
+                    question=query,
+                    tenant_name=tenant_name
+                )
+            else:
+                prompt = self.templates['rag'].format(
+                    context=context,
+                    question=query,
+                    tenant_name=tenant_name
+                )
             
             return self.llm_manager.generate_response(model_name, prompt)
             
@@ -394,10 +432,17 @@ Property Management Team"""
     def _generate_llm_response(self, model_name: str, email_content: str, tenant_name: str) -> str:
         """Generate direct LLM response"""
         try:
-            prompt = self.templates['direct'].format(
-                email_content=email_content,
-                tenant_name=tenant_name
-            )
+            # Format prompt
+            if LANGCHAIN_AVAILABLE and hasattr(self.templates['direct'], 'format'):
+                prompt = self.templates['direct'].format(
+                    email_content=email_content,
+                    tenant_name=tenant_name
+                )
+            else:
+                prompt = self.templates['direct'].format(
+                    email_content=email_content,
+                    tenant_name=tenant_name
+                )
             
             return self.llm_manager.generate_response(model_name, prompt)
             
@@ -466,21 +511,31 @@ Property Management Team"""
             return 'general'
     
     def _extract_tenant_name(self, sender: str, email_obj: EmailMsgFunc = None) -> str:
+        """Extract tenant name from sender information"""
         if email_obj:
             sender_header = email_obj.get('From', '')
             name, email = parseaddr(sender_header)
-        
             if name:
                 return name.strip()
         else:
             name, email = parseaddr(sender)
-    
-        if name:
-            return name.strip()
+            if name:
+                return name.strip()
         
         # Fallback: use the local part of the email (before @) as the name
-        match = re.match(r"([^@]+)@", email)
-        return match.group(1).replace('.', ' ').title() if match else "Tenant"       
+        match = re.match(r"([^@]+)@", email if email else sender)
+        return match.group(1).replace('.', ' ').title() if match else "Tenant"
+
+# Keep original class name for compatibility
+class LangChainAIResponder(LightweightAIResponder):
+    """Alias for backward compatibility"""
+    
+    def __init__(self, config: Dict[str, Any]):
+        # Check if heavy dependencies are available
+        if not LANGCHAIN_AVAILABLE:
+            logger.warning("LangChain not fully available. Using lightweight mode.")
+        
+        super().__init__(config)
 
 # =============================================================================
 # AI Response Management Functions (Waiting Zone)
@@ -502,7 +557,7 @@ def save_ai_responses_to_waiting_zone(email_id: str, response_options: List[Dict
         }
         
         ai_responses_table.insert(ai_response_data)
-        logger.info(f"Saved {len(response_options)} LangChain response options to waiting zone")
+        logger.info(f"Saved {len(response_options)} response options to waiting zone")
         
         return ai_response_id
         
@@ -573,10 +628,9 @@ def select_ai_response(email_id: str, option_id: str, rating: float = None,
         # Update email status
         EmailMessage.update_status(email_id, EmailStatus.RESPONDED)
         
-        logger.info(f"Selected LangChain response {option_id} for email {email_id}")
+        logger.info(f"Selected response {option_id} for email {email_id}")
         return True
         
     except Exception as e:
         logger.error(f"Error selecting AI response: {e}")
         return False
-
