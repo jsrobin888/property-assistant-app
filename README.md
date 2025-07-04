@@ -47,7 +47,7 @@ cp .env.local.copy .env.local   # fill in API keys: OPENAI_API_KEY, GMAIL_* …
 
 # 3. Run the API
 source .venv/bin/activate       # Windows: .venv\\Scripts\\activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --timeout-keep-alive 60 --workers 1
 
 **FYI: Wait until shows "INFO:     Application startup complete."
 ```
@@ -111,6 +111,7 @@ uv run python -c "import langchain_openai; print('✅ LangChain OpenAI installed
 [not supported for heroku build] uv run python -c "import langchain_huggingface; print('✅ LangChain HuggingFace installed')"
 [not supported for heroku build] uv run python -c "import sentence_transformers; print('✅ Sentence Transformers installed')"
 [not supported for heroku build] uv run python -c "import numpy; print(f'✅ NumPy {numpy.__version__}')"
+uv run python -m app.services.tinydb_wrapper_supabase # new test for testing supabase and tinydb wrapper
 uv run python -m app.examples.use_cases.integration_api_cases interactive
 ```
 

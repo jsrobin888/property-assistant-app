@@ -1,22 +1,28 @@
 """
-Email Management API - High-level email operations and management
+Email Management API - Fixed for proper ID handling
+High-level email operations and management with full TinyDB compatibility
 """
 
 from fastapi import APIRouter, HTTPException, Query as QueryParam
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import email processing components
-from ...plugin.email.process_emails import get_email_by_id, get_recent_emails, get_replies_for_email
+from ...plugin.email.process_emails import get_recent_emails, get_replies_for_email
 from ...plugin.ai.ai_response import (
     get_pending_ai_responses, 
     select_ai_response,
     LangChainAIResponder
 )
-from ...models import emails_table, replies_table, ai_responses_table
+from ...models import (
+    emails_table, replies_table, ai_responses_table,
+    get_document_by_id, update_document_by_id, remove_document_by_id
+)
 from app.services.tinydb_wrapper_supabase import Query
-
 from ...llm_config import llm_config
 
 router = APIRouter()
@@ -40,6 +46,11 @@ class BulkUpdateStatusRequest(BaseModel):
     email_ids: List[str] = Field(..., description="List of email IDs to update")
     new_status: str = Field(..., description="New status to set for all emails")
     notes: Optional[str] = Field(None, description="Optional notes for the bulk update")
+
+# Helper function to get email by ID
+def get_email_by_id(email_id: str) -> Optional[Dict]:
+    """Get email by ID with proper handling of both doc_id and custom id"""
+    return get_document_by_id(emails_table, email_id)
 
 # ============================================================================
 # EMAIL MANAGEMENT ENDPOINTS
@@ -77,7 +88,7 @@ async def list_emails(
         
         if has_replies is not None:
             for email in filtered_emails[:]:  # Copy list to modify during iteration
-                email_id = email.get("id", str(email.doc_id))
+                email_id = email.get("id", str(email.get("doc_id", "")))
                 replies = get_replies_for_email(email_id)
                 has_reply = len(replies) > 0
                 
@@ -99,7 +110,7 @@ async def list_emails(
         # Enhance emails with summary data
         enhanced_emails = []
         for email in paginated:
-            email_id = email.get("id", str(email.doc_id))
+            email_id = email.get("id", str(email.get("doc_id", "")))
             replies = get_replies_for_email(email_id)
             
             enhanced_email = {
@@ -124,6 +135,7 @@ async def list_emails(
         }
         
     except Exception as e:
+        logger.error(f"Error listing emails: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing emails: {str(e)}")
 
 @router.get("/{email_id}")
@@ -137,32 +149,38 @@ async def get_email_details(email_id: str):
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
+        # Get the proper email ID for related data
+        custom_id = email.get("id", str(email.get("doc_id", "")))
+        
         # Get related data
-        replies = get_replies_for_email(email_id)
+        replies = get_replies_for_email(custom_id)
         
         # Get action items
         from ...models import action_items_table
         ActionItem = Query()
-        action_items = action_items_table.search(ActionItem.email_id == email_id)
+        action_items = action_items_table.search(ActionItem.email_id == custom_id)
         
         # Get AI responses
         AIResponse = Query()
-        ai_responses = ai_responses_table.search(AIResponse.email_id == email_id)
+        ai_responses = ai_responses_table.search(AIResponse.email_id == custom_id)
         
         # Get tickets
         tickets_info = []
         if email.get("tickets_created"):
             from ...plugin.tickets.manager import Ticket
             for ticket_id in email["tickets_created"]:
-                ticket = Ticket.get_by_id(ticket_id)
-                if ticket:
-                    tickets_info.append({
-                        "ticket_id": ticket_id,
-                        "status": ticket.get("status"),
-                        "category": ticket.get("category"),
-                        "urgency": ticket.get("urgency"),
-                        "assigned_to": ticket.get("assigned_to")
-                    })
+                try:
+                    ticket = Ticket.get_by_id(ticket_id)
+                    if ticket:
+                        tickets_info.append({
+                            "ticket_id": ticket_id,
+                            "status": ticket.get("status"),
+                            "category": ticket.get("category"),
+                            "urgency": ticket.get("urgency"),
+                            "assigned_to": ticket.get("assigned_to")
+                        })
+                except Exception as e:
+                    logger.warning(f"Error getting ticket {ticket_id}: {e}")
         
         return {
             "email": email,
@@ -183,6 +201,7 @@ async def get_email_details(email_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error getting email details for {email_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting email details: {str(e)}")
 
 @router.put("/{email_id}/status")
@@ -204,11 +223,10 @@ async def update_email_status(email_id: str, request: EmailStatusUpdateRequest):
             update_data["status_notes"] = request.notes
         
         # Update in database
-        if email_id.isdigit():
-            emails_table.update(update_data, doc_ids=[int(email_id)])
-        else:
-            Email = Query()
-            emails_table.update(update_data, Email.id == email_id)
+        success = update_document_by_id(emails_table, email_id, update_data)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update email status")
         
         return {
             "success": True,
@@ -220,6 +238,7 @@ async def update_email_status(email_id: str, request: EmailStatusUpdateRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error updating email status for {email_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error updating email status: {str(e)}")
 
 # ============================================================================
@@ -255,6 +274,7 @@ async def get_pending_ai_responses_endpoint():
         }
         
     except Exception as e:
+        logger.error(f"Error getting pending AI responses: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting pending AI responses: {str(e)}")
 
 @router.get("/{email_id}/ai-responses")
@@ -266,9 +286,12 @@ async def get_email_ai_responses(email_id: str):
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
+        # Get the proper email ID for searching
+        custom_id = email.get("id", str(email.get("doc_id", "")))
+        
         # Get AI responses
         AIResponse = Query()
-        ai_responses = ai_responses_table.search(AIResponse.email_id == email_id)
+        ai_responses = ai_responses_table.search(AIResponse.email_id == custom_id)
         
         if not ai_responses:
             return {
@@ -286,6 +309,7 @@ async def get_email_ai_responses(email_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error getting AI responses for {email_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting AI responses: {str(e)}")
 
 @router.post("/{email_id}/ai-responses/select")
@@ -297,9 +321,12 @@ async def select_ai_response_for_email(email_id: str, request: AIResponseSelecti
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
+        # Get the proper email ID for the selection
+        custom_id = email.get("id", str(email.get("doc_id", "")))
+        
         # Select the AI response
         success = select_ai_response(
-            email_id=email_id,
+            email_id=custom_id,  # Use custom ID for AI response functions
             option_id=request.option_id,
             rating=request.rating,
             modifications=request.modifications
@@ -318,6 +345,7 @@ async def select_ai_response_for_email(email_id: str, request: AIResponseSelecti
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error selecting AI response for {email_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error selecting AI response: {str(e)}")
 
 @router.post("/{email_id}/regenerate-ai-responses")
@@ -333,19 +361,22 @@ async def regenerate_ai_responses(email_id: str):
         config = llm_config
         ai_responder = LangChainAIResponder(config)
         
+        # Get the proper email ID
+        custom_id = email.get("id", str(email.get("doc_id", "")))
+        
         # Prepare email data
         email_data = {
             "sender": email.get("sender"),
             "subject": email.get("subject"),
-            "body": email.get("content", "")
+            "body": email.get("content", "") or email.get("body", "")
         }
         
         # Generate new responses
-        response_options = ai_responder.generate_reply(email_data, email_id)
+        response_options = ai_responder.generate_reply(email_data, custom_id)
         
         # Save to waiting zone
         from ...plugin.ai.ai_response import save_ai_responses_to_waiting_zone
-        ai_response_id = save_ai_responses_to_waiting_zone(email_id, response_options)
+        ai_response_id = save_ai_responses_to_waiting_zone(custom_id, response_options)
         
         return {
             "success": True,
@@ -358,6 +389,7 @@ async def regenerate_ai_responses(email_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error regenerating AI responses for {email_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error regenerating AI responses: {str(e)}")
 
 # ============================================================================
@@ -410,6 +442,7 @@ async def search_emails(request: EmailSearchRequest):
         }
         
     except Exception as e:
+        logger.error(f"Error searching emails: {e}")
         raise HTTPException(status_code=500, detail=f"Error searching emails: {str(e)}")
 
 @router.get("/analytics/summary")
@@ -469,212 +502,8 @@ async def get_email_analytics():
         }
         
     except Exception as e:
+        logger.error(f"Error getting email analytics: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting email analytics: {str(e)}")
-
-@router.get("/analytics/trends")
-async def get_email_trends(days: int = QueryParam(30, ge=1, le=365)):
-    """Get email trends over time"""
-    try:
-        all_emails = emails_table.all()
-        
-        # Group emails by date
-        from datetime import datetime, timedelta
-        from collections import defaultdict
-        
-        daily_counts = defaultdict(lambda: {
-            "received": 0,
-            "processed": 0,
-            "tickets_created": 0
-        })
-        
-        # Calculate date range
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
-        
-        for email in all_emails:
-            email_date_str = email.get("received_at", "")
-            if email_date_str:
-                try:
-                    email_date = datetime.fromisoformat(email_date_str.replace('Z', '+00:00'))
-                    if start_date <= email_date <= end_date:
-                        date_key = email_date.strftime("%Y-%m-%d")
-                        daily_counts[date_key]["received"] += 1
-                        
-                        if email.get("status") in ["processed", "responded"]:
-                            daily_counts[date_key]["processed"] += 1
-                        
-                        daily_counts[date_key]["tickets_created"] += len(email.get("tickets_created", []))
-                except:
-                    continue
-        
-        # Convert to list format for easier consumption
-        trend_data = []
-        current_date = start_date
-        while current_date <= end_date:
-            date_key = current_date.strftime("%Y-%m-%d")
-            trend_data.append({
-                "date": date_key,
-                "emails_received": daily_counts[date_key]["received"],
-                "emails_processed": daily_counts[date_key]["processed"],
-                "tickets_created": daily_counts[date_key]["tickets_created"]
-            })
-            current_date += timedelta(days=1)
-        
-        return {
-            "period_days": days,
-            "start_date": start_date.strftime("%Y-%m-%d"),
-            "end_date": end_date.strftime("%Y-%m-%d"),
-            "trend_data": trend_data,
-            "summary": {
-                "total_received": sum(d["emails_received"] for d in trend_data),
-                "total_processed": sum(d["emails_processed"] for d in trend_data),
-                "total_tickets": sum(d["tickets_created"] for d in trend_data),
-                "avg_daily_received": sum(d["emails_received"] for d in trend_data) / len(trend_data),
-                "avg_daily_processed": sum(d["emails_processed"] for d in trend_data) / len(trend_data)
-            }
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting email trends: {str(e)}")
-
-# ============================================================================
-# EMAIL WORKFLOW OPERATIONS
-# ============================================================================
-
-@router.post("/{email_id}/reprocess")
-async def reprocess_email(email_id: str):
-    """Reprocess an email through the complete workflow"""
-    try:
-        # Get email
-        email = get_email_by_id(email_id)
-        if not email:
-            raise HTTPException(status_code=404, detail="Email not found")
-        
-        # Trigger reprocessing
-        from ...plugin.email.process_emails import EmailProcessor
-        email_processor = EmailProcessor()
-        
-        email_data = {
-            "sender": email.get("sender"),
-            "subject": email.get("subject"),
-            "body": email.get("content", "")
-        }
-        
-        # Process email
-        result = email_processor.process_email(email_data)
-        
-        # Update email record
-        update_data = {
-            "reprocessed_at": datetime.now().isoformat(),
-            "reprocessing_result": result
-        }
-        
-        if email_id.isdigit():
-            emails_table.update(update_data, doc_ids=[int(email_id)])
-        else:
-            Email = Query()
-            emails_table.update(update_data, Email.id == email_id)
-        
-        return {
-            "success": True,
-            "email_id": email_id,
-            "reprocessing_result": result,
-            "message": "Email reprocessed successfully"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reprocessing email: {str(e)}")
-
-@router.get("/{email_id}/workflow-status")
-async def get_email_workflow_status(email_id: str):
-    """Get comprehensive workflow status for an email"""
-    try:
-        # Get email
-        email = get_email_by_id(email_id)
-        if not email:
-            raise HTTPException(status_code=404, detail="Email not found")
-        
-        # Get all related data
-        replies = get_replies_for_email(email_id)
-        
-        # Get action items
-        from ...models import action_items_table
-        ActionItem = Query()
-        action_items = action_items_table.search(ActionItem.email_id == email_id)
-        
-        # Get AI responses
-        AIResponse = Query()
-        ai_responses = ai_responses_table.search(AIResponse.email_id == email_id)
-        
-        # Get tickets
-        tickets = []
-        if email.get("tickets_created"):
-            from ...plugin.tickets.manager import Ticket
-            for ticket_id in email["tickets_created"]:
-                ticket = Ticket.get_by_id(ticket_id)
-                if ticket:
-                    tickets.append(ticket)
-        
-        # Determine workflow completion status
-        workflow_steps = {
-            "email_received": bool(email),
-            "email_processed": email.get("status") in ["processed", "responded"],
-            "action_items_extracted": len(action_items) > 0,
-            "ai_responses_generated": len(ai_responses) > 0,
-            "ai_response_selected": any(r.get("sent", False) for r in replies),
-            "tickets_created": len(tickets) > 0,
-            "tickets_resolved": all(t.get("status") in ["Resolved", "Closed"] for t in tickets) if tickets else None
-        }
-        
-        # Calculate completion percentage
-        completed_steps = sum(1 for step, completed in workflow_steps.items() if completed and completed is not None)
-        total_steps = sum(1 for step, completed in workflow_steps.items() if completed is not None)
-        completion_percentage = (completed_steps / total_steps * 100) if total_steps > 0 else 0
-        
-        return {
-            "email_id": email_id,
-            "workflow_steps": workflow_steps,
-            "completion_percentage": completion_percentage,
-            "current_status": email.get("status"),
-            "summary": {
-                "action_items": len(action_items),
-                "ai_responses": len(ai_responses),
-                "replies": len(replies),
-                "tickets": len(tickets)
-            },
-            "next_actions": _determine_next_actions(workflow_steps, email, ai_responses, tickets)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting workflow status: {str(e)}")
-
-def _determine_next_actions(workflow_steps: Dict[str, bool], email: Dict, ai_responses: List, tickets: List) -> List[str]:
-    """Determine what actions can be taken next in the workflow"""
-    next_actions = []
-    
-    if not workflow_steps.get("email_processed"):
-        next_actions.append("Process email to extract action items")
-    
-    if workflow_steps.get("email_processed") and not workflow_steps.get("ai_responses_generated"):
-        next_actions.append("Generate AI responses")
-    
-    if workflow_steps.get("ai_responses_generated") and not workflow_steps.get("ai_response_selected"):
-        next_actions.append("Select and send AI response")
-    
-    if workflow_steps.get("action_items_extracted") and not workflow_steps.get("tickets_created"):
-        next_actions.append("Create tickets from action items")
-    
-    if workflow_steps.get("tickets_created") and workflow_steps.get("tickets_resolved") is False:
-        next_actions.append("Work on resolving open tickets")
-    
-    if not next_actions:
-        next_actions.append("Workflow complete - no further actions needed")
-    
-    return next_actions
 
 # ============================================================================
 # BULK EMAIL OPERATIONS
@@ -699,14 +528,12 @@ async def bulk_update_email_status(request: BulkUpdateStatusRequest):
                     update_data["bulk_update_notes"] = request.notes
                 
                 # Update in database
-                if email_id.isdigit():
-                    result = emails_table.update(update_data, doc_ids=[int(email_id)])
-                else:
-                    Email = Query()
-                    result = emails_table.update(update_data, Email.id == email_id)
+                success = update_document_by_id(emails_table, email_id, update_data)
                 
-                if result:
+                if success:
                     updated_count += 1
+                else:
+                    errors.append(f"Failed to update email {email_id}")
                     
             except Exception as e:
                 errors.append(f"Error updating email {email_id}: {str(e)}")
@@ -720,6 +547,7 @@ async def bulk_update_email_status(request: BulkUpdateStatusRequest):
         }
         
     except Exception as e:
+        logger.error(f"Error in bulk status update: {e}")
         raise HTTPException(status_code=500, detail=f"Error in bulk status update: {str(e)}")
 
 @router.post("/bulk/generate-ai-responses")
@@ -745,19 +573,22 @@ async def bulk_generate_ai_responses(email_ids: List[str]):
                     })
                     continue
                 
+                # Get proper email ID
+                custom_id = email.get("id", str(email.get("doc_id", "")))
+                
                 # Prepare email data
                 email_data = {
                     "sender": email.get("sender"),
                     "subject": email.get("subject"),
-                    "body": email.get("content", "")
+                    "body": email.get("content", "") or email.get("body", "")
                 }
                 
                 # Generate responses
-                response_options = ai_responder.generate_reply(email_data, email_id)
+                response_options = ai_responder.generate_reply(email_data, custom_id)
                 
                 # Save to waiting zone
                 from ...plugin.ai.ai_response import save_ai_responses_to_waiting_zone
-                ai_response_id = save_ai_responses_to_waiting_zone(email_id, response_options)
+                ai_response_id = save_ai_responses_to_waiting_zone(custom_id, response_options)
                 
                 results.append({
                     "email_id": email_id,
@@ -782,8 +613,10 @@ async def bulk_generate_ai_responses(email_ids: List[str]):
         }
         
     except Exception as e:
+        logger.error(f"Error in bulk AI response generation: {e}")
         raise HTTPException(status_code=500, detail=f"Error in bulk AI response generation: {str(e)}")
 
 @router.get("/health")
 async def route_health_status():
-  return {"status": "Healthy!"}
+    """Health check endpoint"""
+    return {"status": "Healthy!"}

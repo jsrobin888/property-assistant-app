@@ -1,18 +1,23 @@
 """
-Database CRUD API - Direct database operations for all tables
+Database CRUD API - Fixed for proper ID handling
+Direct database operations for all tables with full TinyDB compatibility
 """
 
 from fastapi import APIRouter, HTTPException, Query as QueryParam
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from app.services.tinydb_wrapper_supabase import Query
+import logging
 
-# Import database tables and models
+logger = logging.getLogger(__name__)
+
+# Import database tables and models with helper functions
 from ...models import (
     emails_table, replies_table, action_items_table, tenants_table,
     response_feedback_table, context_patterns_table, ai_responses_table,
     EmailMessage, Reply, ActionItem, Tenant, ResponseFeedback, ContextPattern,
+    get_document_by_id, update_document_by_id, remove_document_by_id,
     get_database_stats
 )
 
@@ -77,40 +82,45 @@ async def get_database_statistics():
         return detailed_stats
         
     except Exception as e:
+        logger.error(f"Error getting database stats: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting database stats: {str(e)}")
 
 @router.get("/tables")
 async def list_database_tables():
     """List all available database tables and their info"""
-    return {
-        "tables": {
-            "emails": {
-                "description": "Email messages and processing data",
-                "count": len(emails_table.all()),
-                "fields": ["id", "sender", "subject", "body", "received_at", "status", "priority_level"]
-            },
-            "replies": {
-                "description": "AI-generated replies to emails", 
-                "count": len(replies_table.all()),
-                "fields": ["id", "email_id", "content", "strategy_used", "sent", "created_date"]
-            },
-            "action_items": {
-                "description": "Action items extracted from emails",
-                "count": len(action_items_table.all()),
-                "fields": ["id", "email_id", "action_data", "status", "created_date"]
-            },
-            "tenants": {
-                "description": "Tenant information and contacts",
-                "count": len(tenants_table.all()),
-                "fields": ["id", "name", "email", "unit", "phone", "rent_amount"]
-            },
-            "ai_responses": {
-                "description": "AI response options in waiting zone",
-                "count": len(ai_responses_table.all()),
-                "fields": ["id", "email_id", "response_options", "status", "created_at"]
+    try:
+        return {
+            "tables": {
+                "emails": {
+                    "description": "Email messages and processing data",
+                    "count": len(emails_table.all()),
+                    "fields": ["id", "sender", "subject", "body", "received_at", "status", "priority_level"]
+                },
+                "replies": {
+                    "description": "AI-generated replies to emails", 
+                    "count": len(replies_table.all()),
+                    "fields": ["id", "email_id", "content", "strategy_used", "sent", "created_date"]
+                },
+                "action_items": {
+                    "description": "Action items extracted from emails",
+                    "count": len(action_items_table.all()),
+                    "fields": ["id", "email_id", "action_data", "status", "created_date"]
+                },
+                "tenants": {
+                    "description": "Tenant information and contacts",
+                    "count": len(tenants_table.all()),
+                    "fields": ["id", "name", "email", "unit", "phone", "rent_amount"]
+                },
+                "ai_responses": {
+                    "description": "AI response options in waiting zone",
+                    "count": len(ai_responses_table.all()),
+                    "fields": ["id", "email_id", "response_options", "status", "created_at"]
+                }
             }
         }
-    }
+    except Exception as e:
+        logger.error(f"Error listing tables: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing tables: {str(e)}")
 
 # ============================================================================
 # EMAILS TABLE CRUD
@@ -152,27 +162,26 @@ async def get_all_emails(
         }
         
     except Exception as e:
+        logger.error(f"Error fetching emails: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching emails: {str(e)}")
 
 @router.get("/emails/{email_id}")
 async def get_email_by_id(email_id: str):
-    """Get specific email by ID"""
+    """Get specific email by ID (handles both doc_id and custom id)"""
     try:
-        # Try both doc_id and custom id field
-        email = emails_table.get(doc_id=int(email_id)) if email_id.isdigit() else None
-        
-        if not email:
-            # Try by custom id field
-            Email = Query()
-            email = emails_table.get(Email.id == email_id)
+        email = get_document_by_id(emails_table, email_id)
         
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
-        # Get related data
-        Email = Query()
-        replies = replies_table.search(Email.email_id == email_id)
-        action_items = action_items_table.search(Email.email_id == email_id)
+        # Get related data using the custom id field
+        custom_id = email.get('id', str(email.get('doc_id', '')))
+        
+        Reply = Query()
+        replies = replies_table.search(Reply.email_id == custom_id)
+        
+        ActionItem = Query()
+        action_items = action_items_table.search(ActionItem.email_id == custom_id)
         
         return {
             "email": email,
@@ -187,6 +196,7 @@ async def get_email_by_id(email_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching email {email_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching email: {str(e)}")
 
 @router.post("/emails")
@@ -209,18 +219,15 @@ async def create_email(request: EmailCreateRequest):
         }
         
     except Exception as e:
+        logger.error(f"Error creating email: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating email: {str(e)}")
 
 @router.put("/emails/{email_id}")
 async def update_email(email_id: str, update_data: Dict[str, Any]):
     """Update an email record"""
     try:
-        # Find email first
-        email = emails_table.get(doc_id=int(email_id)) if email_id.isdigit() else None
-        if not email:
-            Email = Query()
-            email = emails_table.get(Email.id == email_id)
-        
+        # Check if email exists
+        email = get_document_by_id(emails_table, email_id)
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
@@ -228,11 +235,10 @@ async def update_email(email_id: str, update_data: Dict[str, Any]):
         update_data["updated_at"] = datetime.now().isoformat()
         
         # Update in database
-        if email_id.isdigit():
-            emails_table.update(update_data, doc_ids=[int(email_id)])
-        else:
-            Email = Query()
-            emails_table.update(update_data, Email.id == email_id)
+        success = update_document_by_id(emails_table, email_id, update_data)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update email")
         
         return {
             "success": True,
@@ -243,32 +249,36 @@ async def update_email(email_id: str, update_data: Dict[str, Any]):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error updating email {email_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error updating email: {str(e)}")
 
 @router.delete("/emails/{email_id}")
 async def delete_email(email_id: str):
     """Delete an email and all related data"""
     try:
-        # Find and delete email
-        email = emails_table.get(doc_id=int(email_id)) if email_id.isdigit() else None
-        if not email:
-            Email = Query()
-            email = emails_table.get(Email.id == email_id)
-            
+        # Check if email exists
+        email = get_document_by_id(emails_table, email_id)
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
+        # Get custom ID for related data removal
+        custom_id = email.get('id', str(email.get('doc_id', '')))
+        
         # Delete related data
-        Email = Query()
-        replies_deleted = len(replies_table.remove(Email.email_id == email_id))
-        action_items_deleted = len(action_items_table.remove(Email.email_id == email_id))
-        ai_responses_deleted = len(ai_responses_table.remove(Email.email_id == email_id))
+        Reply = Query()
+        replies_deleted = len(replies_table.remove(Reply.email_id == custom_id))
+        
+        ActionItem = Query()
+        action_items_deleted = len(action_items_table.remove(ActionItem.email_id == custom_id))
+        
+        AIResponse = Query()
+        ai_responses_deleted = len(ai_responses_table.remove(AIResponse.email_id == custom_id))
         
         # Delete email
-        if email_id.isdigit():
-            emails_table.remove(doc_ids=[int(email_id)])
-        else:
-            emails_table.remove(Email.id == email_id)
+        success = remove_document_by_id(emails_table, email_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete email")
         
         return {
             "success": True,
@@ -284,6 +294,7 @@ async def delete_email(email_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error deleting email {email_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error deleting email: {str(e)}")
 
 # ============================================================================
@@ -300,19 +311,14 @@ async def get_all_tenants():
             "total": len(tenants)
         }
     except Exception as e:
+        logger.error(f"Error fetching tenants: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching tenants: {str(e)}")
 
 @router.get("/tenants/{tenant_id}")
 async def get_tenant_by_id(tenant_id: str):
     """Get specific tenant by ID"""
     try:
-        # Try by doc_id first
-        tenant = tenants_table.get(doc_id=int(tenant_id)) if tenant_id.isdigit() else None
-        
-        if not tenant:
-            # Try by custom id field
-            Tenant = Query()
-            tenant = tenants_table.get(Tenant.id == tenant_id)
+        tenant = get_document_by_id(tenants_table, tenant_id)
         
         if not tenant:
             raise HTTPException(status_code=404, detail="Tenant not found")
@@ -330,6 +336,7 @@ async def get_tenant_by_id(tenant_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching tenant {tenant_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching tenant: {str(e)}")
 
 @router.post("/tenants")
@@ -358,6 +365,7 @@ async def create_tenant(request: TenantCreateRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error creating tenant: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating tenant: {str(e)}")
 
 @router.get("/tenants/by-email/{email}")
@@ -391,6 +399,7 @@ async def get_tenant_by_email(email: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching tenant by email {email}: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching tenant: {str(e)}")
 
 # ============================================================================
@@ -426,19 +435,14 @@ async def get_all_action_items(
         }
         
     except Exception as e:
+        logger.error(f"Error fetching action items: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching action items: {str(e)}")
 
 @router.get("/action-items/{item_id}")
 async def get_action_item_by_id(item_id: str):
     """Get specific action item by ID"""
     try:
-        # Try by doc_id first
-        item = action_items_table.get(doc_id=int(item_id)) if item_id.isdigit() else None
-        
-        if not item:
-            # Try by custom id field
-            ActionItem = Query()
-            item = action_items_table.get(ActionItem.id == item_id)
+        item = get_document_by_id(action_items_table, item_id)
         
         if not item:
             raise HTTPException(status_code=404, detail="Action item not found")
@@ -446,7 +450,7 @@ async def get_action_item_by_id(item_id: str):
         # Get related email
         email = None
         if item.get("email_id"):
-            email = get_email_by_id(item["email_id"])
+            email = get_document_by_id(emails_table, item["email_id"])
         
         return {
             "action_item": item,
@@ -457,6 +461,7 @@ async def get_action_item_by_id(item_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching action item {item_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching action item: {str(e)}")
 
 @router.post("/action-items")
@@ -476,6 +481,7 @@ async def create_action_item(request: ActionItemCreateRequest):
         }
         
     except Exception as e:
+        logger.error(f"Error creating action item: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating action item: {str(e)}")
 
 # ============================================================================
@@ -505,19 +511,14 @@ async def get_all_replies(email_id: Optional[str] = QueryParam(None)):
         }
         
     except Exception as e:
+        logger.error(f"Error fetching replies: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching replies: {str(e)}")
 
 @router.get("/replies/{reply_id}")
 async def get_reply_by_id(reply_id: str):
     """Get specific reply by ID"""
     try:
-        # Try by doc_id first
-        reply = replies_table.get(doc_id=int(reply_id)) if reply_id.isdigit() else None
-        
-        if not reply:
-            # Try by custom id field
-            Reply = Query()
-            reply = replies_table.get(Reply.id == reply_id)
+        reply = get_document_by_id(replies_table, reply_id)
         
         if not reply:
             raise HTTPException(status_code=404, detail="Reply not found")
@@ -527,6 +528,7 @@ async def get_reply_by_id(reply_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching reply {reply_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching reply: {str(e)}")
 
 @router.post("/replies")
@@ -547,6 +549,7 @@ async def create_reply(request: ReplyCreateRequest):
         }
         
     except Exception as e:
+        logger.error(f"Error creating reply: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating reply: {str(e)}")
 
 # ============================================================================
@@ -582,19 +585,14 @@ async def get_all_ai_responses(
         }
         
     except Exception as e:
+        logger.error(f"Error fetching AI responses: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching AI responses: {str(e)}")
 
 @router.get("/ai-responses/{response_id}")
 async def get_ai_response_by_id(response_id: str):
     """Get specific AI response by ID"""
     try:
-        # Try by doc_id first
-        response = ai_responses_table.get(doc_id=int(response_id)) if response_id.isdigit() else None
-        
-        if not response:
-            # Try by custom id field
-            AIResponse = Query()
-            response = ai_responses_table.get(AIResponse.id == response_id)
+        response = get_document_by_id(ai_responses_table, response_id)
         
         if not response:
             raise HTTPException(status_code=404, detail="AI response not found")
@@ -604,6 +602,7 @@ async def get_ai_response_by_id(response_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching AI response {response_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching AI response: {str(e)}")
 
 # ============================================================================
@@ -633,6 +632,7 @@ async def bulk_delete_emails(email_ids: List[str]):
         }
         
     except Exception as e:
+        logger.error(f"Error in bulk delete: {e}")
         raise HTTPException(status_code=500, detail=f"Error in bulk delete: {str(e)}")
 
 @router.post("/bulk/update-action-items-status")
@@ -645,16 +645,17 @@ async def bulk_update_action_items_status(item_ids: List[str], new_status: str):
         for item_id in item_ids:
             try:
                 # Update action item status
-                ActionItemQuery = Query()
-                result = action_items_table.update(
-                    {
-                        "status": new_status,
-                        "updated_date": datetime.now().isoformat()
-                    },
-                    ActionItemQuery.id == item_id
-                )
-                if result:
+                update_data = {
+                    "status": new_status,
+                    "updated_date": datetime.now().isoformat()
+                }
+                
+                success = update_document_by_id(action_items_table, item_id, update_data)
+                if success:
                     updated_count += 1
+                else:
+                    errors.append(f"Failed to update item {item_id}")
+                    
             except Exception as e:
                 errors.append(f"Error updating item {item_id}: {str(e)}")
         
@@ -667,6 +668,7 @@ async def bulk_update_action_items_status(item_ids: List[str], new_status: str):
         }
         
     except Exception as e:
+        logger.error(f"Error in bulk update: {e}")
         raise HTTPException(status_code=500, detail=f"Error in bulk update: {str(e)}")
 
 # ============================================================================
@@ -710,6 +712,7 @@ async def search_emails(
         }
         
     except Exception as e:
+        logger.error(f"Error searching emails: {e}")
         raise HTTPException(status_code=500, detail=f"Error searching emails: {str(e)}")
 
 @router.get("/reports/daily-summary")
@@ -764,19 +767,10 @@ async def get_daily_summary(date: Optional[str] = QueryParam(None, description="
         }
         
     except Exception as e:
+        logger.error(f"Error generating daily summary: {e}")
         raise HTTPException(status_code=500, detail=f"Error generating daily summary: {str(e)}")
-
-def get_email_by_id_internal(email_id: str):
-    """Internal helper function to get email by ID"""
-    # Try both doc_id and custom id field
-    email = emails_table.get(doc_id=int(email_id)) if email_id.isdigit() else None
-    
-    if not email:
-        Email = Query()
-        email = emails_table.get(Email.id == email_id)
-    
-    return email
 
 @router.get("/health")
 async def route_health_status():
-  return {"status": "Healthy!"}
+    """Health check endpoint"""
+    return {"status": "Healthy!"}

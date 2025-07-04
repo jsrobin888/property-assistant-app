@@ -5,6 +5,9 @@ from enum import Enum
 from app.services.tinydb_wrapper_supabase import TinyDB, Query
 import hashlib
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Initialize TinyDB
 db = TinyDB()
@@ -84,6 +87,64 @@ class ResponseSelectionResponse(BaseModel):
     sent_at: str
     message: str
 
+# Helper functions for ID handling
+def get_document_by_id(table, doc_id: Union[str, int]) -> Optional[Dict]:
+    """Get document by either doc_id (int) or custom id (str)"""
+    try:
+        # Try by PostgreSQL doc_id first if it's numeric
+        if isinstance(doc_id, int) or (isinstance(doc_id, str) and doc_id.isdigit()):
+            doc_id_int = int(doc_id)
+            document = table.get(doc_id=doc_id_int)
+            if document:
+                return document
+        
+        # Try by custom id field
+        CustomId = Query()
+        document = table.get(CustomId.id == str(doc_id))
+        return document
+        
+    except Exception as e:
+        logger.error(f"Error getting document by id {doc_id}: {e}")
+        return None
+
+def update_document_by_id(table, doc_id: Union[str, int], update_data: Dict) -> bool:
+    """Update document by either doc_id (int) or custom id (str)"""
+    try:
+        # Try by PostgreSQL doc_id first if it's numeric
+        if isinstance(doc_id, int) or (isinstance(doc_id, str) and doc_id.isdigit()):
+            doc_id_int = int(doc_id)
+            result = table.update(update_data, doc_ids=[doc_id_int])
+            if result:
+                return True
+        
+        # Try by custom id field
+        CustomId = Query()
+        result = table.update(update_data, CustomId.id == str(doc_id))
+        return len(result) > 0
+        
+    except Exception as e:
+        logger.error(f"Error updating document by id {doc_id}: {e}")
+        return False
+
+def remove_document_by_id(table, doc_id: Union[str, int]) -> bool:
+    """Remove document by either doc_id (int) or custom id (str)"""
+    try:
+        # Try by PostgreSQL doc_id first if it's numeric
+        if isinstance(doc_id, int) or (isinstance(doc_id, str) and doc_id.isdigit()):
+            doc_id_int = int(doc_id)
+            result = table.remove(doc_ids=[doc_id_int])
+            if result:
+                return True
+        
+        # Try by custom id field
+        CustomId = Query()
+        result = table.remove(CustomId.id == str(doc_id))
+        return len(result) > 0
+        
+    except Exception as e:
+        logger.error(f"Error removing document by id {doc_id}: {e}")
+        return False
+
 # TinyDB Model Classes
 class EmailMessage:
     """Email message model for TinyDB operations"""
@@ -109,10 +170,9 @@ class EmailMessage:
         return emails_table.insert(email_data)
     
     @staticmethod
-    def get_by_id(email_id: str) -> Optional[Dict]:
-        """Get email by ID"""
-        Email = Query()
-        return emails_table.get(Email.id == email_id)
+    def get_by_id(email_id: Union[str, int]) -> Optional[Dict]:
+        """Get email by ID (handles both doc_id and custom id)"""
+        return get_document_by_id(emails_table, email_id)
     
     @staticmethod
     def get_all(limit: int = 100, skip: int = 0) -> List[Dict]:
@@ -121,10 +181,9 @@ class EmailMessage:
         return all_emails[skip:skip + limit]
     
     @staticmethod
-    def update_status(email_id: str, status: EmailStatus) -> bool:
+    def update_status(email_id: Union[str, int], status: EmailStatus) -> bool:
         """Update email status"""
-        Email = Query()
-        return emails_table.update({'status': status.value}, Email.id == email_id)
+        return update_document_by_id(emails_table, email_id, {'status': status.value})
     
     @staticmethod
     def get_unprocessed() -> List[Dict]:
@@ -155,10 +214,9 @@ class Reply:
         return replies_table.search(Reply.email_id == email_id)
     
     @staticmethod
-    def mark_as_sent(reply_id: str) -> bool:
+    def mark_as_sent(reply_id: Union[str, int]) -> bool:
         """Mark reply as sent"""
-        Reply = Query()
-        return replies_table.update({'sent': True}, Reply.id == reply_id)
+        return update_document_by_id(replies_table, reply_id, {'sent': True})
 
 class ActionItem:
     """Action item model for TinyDB operations"""
@@ -183,13 +241,12 @@ class ActionItem:
         return action_items_table.search(ActionItem.email_id == email_id)
     
     @staticmethod
-    def update_status(action_id: str, status: ActionStatus) -> bool:
+    def update_status(action_id: Union[str, int], status: ActionStatus) -> bool:
         """Update action item status"""
-        ActionItem = Query()
-        return action_items_table.update({
+        return update_document_by_id(action_items_table, action_id, {
             'status': status.value,
             'updated_date': datetime.now().isoformat()
-        }, ActionItem.id == action_id)
+        })
     
     @staticmethod
     def get_open_items() -> List[Dict]:
@@ -291,10 +348,10 @@ class ContextPattern:
     def update_success_rate(context_label: str, success_rate: float) -> bool:
         """Update success rate for a context pattern"""
         Pattern = Query()
-        return context_patterns_table.update({
+        return len(context_patterns_table.update({
             'success_rate': success_rate,
             'last_updated': datetime.now().isoformat()
-        }, Pattern.context_label == context_label)
+        }, Pattern.context_label == context_label)) > 0
     
     @staticmethod
     def get_all_patterns() -> List[Dict]:
@@ -338,5 +395,16 @@ def get_database_stats() -> Dict[str, int]:
         'action_items': len(action_items_table),
         'tenants': len(tenants_table),
         'response_feedback': len(response_feedback_table),
-        'context_patterns': len(context_patterns_table)
+        'context_patterns': len(context_patterns_table),
+        'ai_responses': len(ai_responses_table)
     }
+
+# Export the helper functions for use in API endpoints
+__all__ = [
+    'EmailMessage', 'Reply', 'ActionItem', 'Tenant', 'ResponseFeedback', 'ContextPattern',
+    'EmailStatus', 'PriorityLevel', 'ActionStatus',
+    'emails_table', 'replies_table', 'action_items_table', 'tenants_table',
+    'response_feedback_table', 'context_patterns_table', 'ai_responses_table',
+    'get_document_by_id', 'update_document_by_id', 'remove_document_by_id',
+    'cleanup_old_records', 'get_database_stats', 'db'
+]

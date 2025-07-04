@@ -1,5 +1,6 @@
 """
-Workflow Control API - Triggers email processing and workflow components
+Workflow Control API - Fixed for proper ID handling
+Triggers email processing and workflow components with full TinyDB compatibility
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -12,7 +13,6 @@ import logging
 # Import your email processing functions
 from ...plugin.email.process_emails import (
     process_new_emails, 
-    get_email_by_id, 
     get_recent_emails,
     cleanup_old_records
 )
@@ -20,6 +20,11 @@ from ...plugin.email.gmail_client import GmailClient
 from ...plugin.email.email_processor import EmailProcessor
 from ...plugin.ai.ai_response import LangChainAIResponder, save_ai_responses_to_waiting_zone
 from ...plugin.tickets.manager import Ticket, push_ticket
+from ...models import (
+    emails_table, action_items_table, 
+    get_document_by_id, update_document_by_id
+)
+from app.services.tinydb_wrapper_supabase import Query
 from ...llm_config import llm_config
 
 router = APIRouter()
@@ -202,27 +207,29 @@ async def process_single_email(email_id: str):
     """
     try:
         # Get email from database
-        email = get_email_by_id(email_id)
+        email = get_document_by_id(emails_table, email_id)
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
         logger.info(f"Processing email {email_id}: {email.get('subject', 'No subject')}")
         
-        # FIX: Use EmailProcessor to properly process the email
-        from ...plugin.email.email_processor import EmailProcessor
+        # Use EmailProcessor to properly process the email
         email_processor = EmailProcessor()
+        
+        # Get proper email ID for processing
+        custom_id = email.get("id", str(email.get("doc_id", "")))
         
         # Prepare email data for processing
         email_data = {
             "sender": email.get("sender"),
             "subject": email.get("subject"), 
-            "body": email.get("content", "") or email.get("body", "")  # Try both fields
+            "body": email.get("content", "") or email.get("body", "")
         }
         
         logger.info(f"Email data: sender={email_data['sender']}, subject={email_data['subject']}, body_length={len(email_data['body'])}")
         
-        # FIX: Don't create a new email, just extract action items from existing one
-        action_items = email_processor._extract_action_items(email_data, email_id)
+        # Extract action items from existing email
+        action_items = email_processor._extract_action_items(email_data, custom_id)
         
         logger.info(f"Extracted {len(action_items)} action items")
         
@@ -230,29 +237,28 @@ async def process_single_email(email_id: str):
         from ...models import ActionItem, ActionStatus
         for action_data in action_items:
             ActionItem.create(
-                email_id=email_id,
+                email_id=custom_id,
                 action_data=action_data,
                 status=ActionStatus.OPEN
             )
             logger.info(f"Saved action item: {action_data.get('action', 'unknown')}")
         
         # Update email status to processed
-        from ...models import EmailMessage, EmailStatus
-        EmailMessage.update_status(email_id, EmailStatus.PROCESSED)
-        
-        # Update email record with processing info
-        from ...models import emails_table
-        from app.services.tinydb_wrapper_supabase import Query
-        Email = Query()
-        
-        emails_table.update({
+        from ...models import EmailStatus
+        update_data = {
             'action_items_count': len(action_items),
             'status': EmailStatus.PROCESSED.value,
             'processed_at': datetime.now().isoformat()
-        }, Email.id == email_id)
+        }
+        
+        success = update_document_by_id(emails_table, email_id, update_data)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update email status")
         
         processing_result = {
             'email_id': email_id,
+            'custom_id': custom_id,
             'action_items_count': len(action_items),
             'status': EmailStatus.PROCESSED.value,
             'processed_at': datetime.now().isoformat()
@@ -278,7 +284,7 @@ async def generate_ai_responses_for_email(email_id: str):
     """
     try:
         # Get email from database
-        email = get_email_by_id(email_id)
+        email = get_document_by_id(emails_table, email_id)
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
@@ -286,21 +292,25 @@ async def generate_ai_responses_for_email(email_id: str):
         config = llm_config
         ai_responder = LangChainAIResponder(config)
         
+        # Get proper email ID
+        custom_id = email.get("id", str(email.get("doc_id", "")))
+        
         # Generate responses
         email_data = {
             "sender": email.get("sender"),
             "subject": email.get("subject"),
-            "body": email.get("content", "")
+            "body": email.get("content", "") or email.get("body", "")
         }
         
-        response_options = ai_responder.generate_reply(email_data, email_id)
+        response_options = ai_responder.generate_reply(email_data, custom_id)
         
         # Save to waiting zone
-        ai_response_id = save_ai_responses_to_waiting_zone(email_id, response_options)
+        ai_response_id = save_ai_responses_to_waiting_zone(custom_id, response_options)
         
         return {
             "success": True,
             "email_id": email_id,
+            "custom_id": custom_id,
             "ai_response_id": ai_response_id,
             "response_count": len(response_options),
             "responses": [
@@ -328,27 +338,28 @@ async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
         logger.info(f"Creating tickets for email {request.email_id}")
         
         # Get email from database
-        email = get_email_by_id(request.email_id)
+        email = get_document_by_id(emails_table, request.email_id)
         if not email:
             logger.error(f"Email {request.email_id} not found")
             raise HTTPException(status_code=404, detail="Email not found")
         
         logger.info(f"Found email: {email.get('subject', 'No subject')}")
         
+        # Get proper email ID
+        custom_id = email.get("id", str(email.get("doc_id", "")))
+        
         # Get action items from database
-        from ...models import action_items_table
-        from app.services.tinydb_wrapper_supabase import Query
-        
         ActionItem = Query()
-        action_items = action_items_table.search(ActionItem.email_id == request.email_id)
+        action_items = action_items_table.search(ActionItem.email_id == custom_id)
         
-        logger.info(f"Found {len(action_items)} action items for email {request.email_id}")
+        logger.info(f"Found {len(action_items)} action items for email {custom_id}")
         
         if not action_items:
             return {
                 "success": False,
                 "message": f"No action items found for email {request.email_id}",
                 "email_id": request.email_id,
+                "custom_id": custom_id,
                 "tickets_created": [],
                 "ticket_count": 0
             }
@@ -368,7 +379,7 @@ async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
             "sender": email.get("sender"),
             "subject": email.get("subject"),
             "body": email.get("content", "") or email.get("body", ""),
-            "id": request.email_id
+            "id": custom_id
         }
         
         logger.info(f"Email data prepared: sender={email_data['sender']}")
@@ -402,13 +413,11 @@ async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
                     created_tickets.append(ticket_id)
                     
                     # Update action item with ticket reference
-                    action_items_table.update(
-                        {
-                            'ticket_id': ticket_id, 
-                            'ticket_created_at': datetime.now().isoformat()
-                        },
-                        ActionItem.id == action_item['id']
-                    )
+                    from ...models import update_document_by_id
+                    update_document_by_id(action_items_table, action_item.get('id'), {
+                        'ticket_id': ticket_id, 
+                        'ticket_created_at': datetime.now().isoformat()
+                    })
                     
                     logger.info(f"✅ Created ticket {ticket_id} from action item {action_item.get('id')}")
                 else:
@@ -424,16 +433,17 @@ async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
         
         # Update email record with created tickets
         if created_tickets:
-            from ...models import emails_table
-            Email = Query()
-            emails_table.update(
-                {
-                    'tickets_created': created_tickets,
-                    'tickets_created_at': datetime.now().isoformat()
-                }, 
-                Email.id == request.email_id
-            )
-            logger.info(f"Updated email {request.email_id} with {len(created_tickets)} tickets")
+            update_data = {
+                'tickets_created': created_tickets,
+                'tickets_created_at': datetime.now().isoformat()
+            }
+            
+            success = update_document_by_id(emails_table, request.email_id, update_data)
+            
+            if success:
+                logger.info(f"Updated email {request.email_id} with {len(created_tickets)} tickets")
+            else:
+                logger.warning(f"Failed to update email {request.email_id} with ticket info")
         
         # Return results
         success = len(created_tickets) > 0
@@ -444,6 +454,7 @@ async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
         result = {
             "success": success,
             "email_id": request.email_id,
+            "custom_id": custom_id,
             "tickets_created": created_tickets,
             "ticket_count": len(created_tickets),
             "message": message,
@@ -458,7 +469,6 @@ async def create_tickets_from_email_endpoint(request: TicketCreationRequest):
     except Exception as e:
         logger.error(f"Error in create_tickets_from_email_endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ============================================================================
 # WORKFLOW MANAGEMENT
@@ -570,7 +580,8 @@ async def workflow_health_check():
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
-        
+
 @router.get("/health")
 async def route_health_status():
-  return {"status": "Healthy!"}
+    """Health check endpoint"""
+    return {"status": "Healthy!"}
